@@ -1,0 +1,29 @@
+# systemd unit — 24/7 deployment alongside weighbridge.service
+# Install:
+#   sudo cp deploy/clock-terminal.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now clock-terminal
+# Logs:
+#   journalctl -u clock-terminal -f
+
+[Unit]
+Description=Employee clock-in terminal
+After=network.target
+
+[Service]
+Type=simple
+# Adjust user and path to your machine
+User=annanas
+WorkingDirectory=/home/annanas/Super Fingertech
+ExecStart=/usr/bin/python3 server.py
+Restart=always
+RestartSec=3
+Environment=PORT=5050
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/home/annanas/Super Fingertech/data
+
+[Install]
+WantedBy=multi-user.target

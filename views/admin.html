@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clock Admin</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>🕒 Employee Clock — Admin</h1>
+  <nav>
+    <a href="/clock.html">Kiosk</a>
+    <a href="#" id="logoutBtn">Logout</a>
+  </nav>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Employees</h2>
+    <div id="employeeTableWrap">
+      <table class="data">
+        <thead><tr><th>Name</th><th>Employee #</th><th>Status</th><th>Added</th><th></th></tr></thead>
+        <tbody id="employeeBody"></tbody>
+      </table>
+    </div>
+    <div class="grid" style="margin-top:16px;">
+      <div class="field"><label>Name</label><input id="newName" placeholder="Full name"></div>
+      <div class="field"><label>Employee # (1-8 digits)</label><input id="newNumber" inputmode="numeric" maxlength="8" placeholder="1001"></div>
+      <div class="field"><label>&nbsp;</label><button class="btn green" id="addEmployeeBtn">Add employee</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Time entries</h2>
+    <div class="filters">
+      <div class="field"><label>Employee</label>
+        <select id="filterEmployee"><option value="">All</option></select>
+      </div>
+      <div class="field"><label>From</label><input id="filterFrom" type="date"></div>
+      <div class="field"><label>To</label><input id="filterTo" type="date"></div>
+      <button class="btn" id="filterBtn">Filter</button>
+      <button class="btn secondary" id="exportBtn">Export CSV</button>
+    </div>
+    <div style="height:14px"></div>
+    <div id="summaryWrap"></div>
+    <div style="height:14px"></div>
+    <table class="data">
+      <thead><tr><th>Employee</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Note</th><th></th></tr></thead>
+      <tbody id="entriesBody"></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function toast(msg, err) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (err ? ' err' : '');
+    setTimeout(() => { t.className = 'toast'; }, 2600);
+  }
+  function fmtDT(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+  function toLocalInputValue(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  let employees = [];
+
+  async function loadEmployees() {
+    const res = await fetch('/api/admin/employees', { cache: 'no-store' });
+    const data = await res.json();
+    employees = data.employees || [];
+    renderEmployeeTable();
+    renderEmployeeFilter();
+  }
+
+  function renderEmployeeTable() {
+    $('employeeBody').innerHTML = employees.map(e => {
+      const badge = e.active ? '<span class="badge in">Active</span>' : '<span class="badge out">Inactive</span>';
+      return '<tr>' +
+        '<td>' + esc(e.name) + '</td>' +
+        '<td>' + esc(e.employeeNumber) + '</td>' +
+        '<td>' + badge + '</td>' +
+        '<td class="muted">' + esc(fmtDT(e.createdAt)) + '</td>' +
+        '<td class="row-actions">' +
+          '<button class="btn small secondary" data-act="number" data-id="' + e.id + '">Change #</button>' +
+          '<button class="btn small ' + (e.active ? 'danger' : 'green') + '" data-act="toggle" data-id="' + e.id + '">' + (e.active ? 'Deactivate' : 'Reactivate') + '</button>' +
+        '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="muted">No employees yet.</td></tr>';
+
+    $('employeeBody').querySelectorAll('button[data-act="toggle"]').forEach(btn => {
+      btn.onclick = async () => {
+        const emp = employees.find(e => e.id === Number(btn.dataset.id));
+        await fetch('/api/admin/employees/' + btn.dataset.id, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ active: !emp.active })
+        });
+        loadEmployees();
+      };
+    });
+    $('employeeBody').querySelectorAll('button[data-act="number"]').forEach(btn => {
+      btn.onclick = async () => {
+        const employeeNumber = prompt('New employee number (1-8 digits):');
+        if (!employeeNumber) return;
+        if (!/^\d{1,8}$/.test(employeeNumber)) { toast('Employee number must be 1-8 digits', true); return; }
+        const res = await fetch('/api/admin/employees/' + btn.dataset.id, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ employeeNumber })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) { toast('Employee number updated'); loadEmployees(); } else { toast(data.error || 'Failed to update', true); }
+      };
+    });
+  }
+
+  function renderEmployeeFilter() {
+    const sel = $('filterEmployee');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All</option>' +
+      employees.map(e => '<option value="' + e.id + '">' + esc(e.name) + '</option>').join('');
+    sel.value = current;
+  }
+
+  $('addEmployeeBtn').onclick = async () => {
+    const name = $('newName').value.trim();
+    const employeeNumber = $('newNumber').value.trim();
+    if (!name) { toast('Name required', true); return; }
+    if (!/^\d{1,8}$/.test(employeeNumber)) { toast('Employee number must be 1-8 digits', true); return; }
+    const res = await fetch('/api/admin/employees', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, employeeNumber })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Failed to add employee', true); return; }
+    $('newName').value = '';
+    $('newNumber').value = '';
+    toast('Employee added');
+    loadEmployees();
+  };
+
+  function entriesQuery() {
+    const params = new URLSearchParams();
+    if ($('filterEmployee').value) params.set('employeeId', $('filterEmployee').value);
+    if ($('filterFrom').value) params.set('from', $('filterFrom').value);
+    if ($('filterTo').value) params.set('to', $('filterTo').value + 'T23:59:59');
+    return params.toString();
+  }
+
+  async function loadEntries() {
+    const res = await fetch('/api/admin/entries?' + entriesQuery(), { cache: 'no-store' });
+    const data = await res.json();
+    renderSummary(data.summary || []);
+    renderEntries(data.entries || []);
+  }
+
+  function renderSummary(summary) {
+    if (!summary.length) { $('summaryWrap').innerHTML = '<p class="muted">No completed shifts in range.</p>'; return; }
+    $('summaryWrap').innerHTML = '<table class="data"><thead><tr><th>Employee</th><th>Shifts</th><th>Total hours</th></tr></thead><tbody>' +
+      summary.map(s => '<tr><td>' + esc(s.employeeName) + '</td><td>' + s.shifts + '</td><td>' + s.hours + '</td></tr>').join('') +
+      '</tbody></table>';
+  }
+
+  function renderEntries(entries) {
+    $('entriesBody').innerHTML = entries.map(e => {
+      const status = e.clockOut ? '' : '<span class="badge in">Open</span>';
+      return '<tr data-id="' + e.id + '">' +
+        '<td>' + esc(e.employeeName) + '</td>' +
+        '<td><input type="datetime-local" class="ci" value="' + toLocalInputValue(e.clockIn) + '" style="min-width:180px"></td>' +
+        '<td><input type="datetime-local" class="co" value="' + toLocalInputValue(e.clockOut) + '" style="min-width:180px">' + status + '</td>' +
+        '<td>' + (e.hours != null ? e.hours : '—') + '</td>' +
+        '<td><input type="text" class="note" value="' + esc(e.note || '') + '" placeholder="note" style="min-width:120px"></td>' +
+        '<td class="row-actions">' +
+          '<button class="btn small secondary" data-act="save">Save</button>' +
+          '<button class="btn small danger" data-act="delete">Delete</button>' +
+        '</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="muted">No entries in range.</td></tr>';
+
+    $('entriesBody').querySelectorAll('tr[data-id]').forEach(row => {
+      const id = row.dataset.id;
+      row.querySelector('[data-act="save"]').onclick = async () => {
+        const ci = row.querySelector('.ci').value;
+        const co = row.querySelector('.co').value;
+        const note = row.querySelector('.note').value;
+        const res = await fetch('/api/admin/entries/' + id, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clockIn: ci ? new Date(ci).toISOString() : null, clockOut: co ? new Date(co).toISOString() : null, note })
+        });
+        if (res.ok) { toast('Entry updated'); loadEntries(); } else { toast('Save failed', true); }
+      };
+      row.querySelector('[data-act="delete"]').onclick = async () => {
+        if (!confirm('Delete this entry?')) return;
+        const res = await fetch('/api/admin/entries/' + id, { method: 'DELETE' });
+        if (res.ok) { toast('Entry deleted'); loadEntries(); } else { toast('Delete failed', true); }
+      };
+    });
+  }
+
+  $('filterBtn').onclick = loadEntries;
+  $('exportBtn').onclick = () => { window.location = '/api/admin/export.csv?' + entriesQuery(); };
+  $('logoutBtn').onclick = async (e) => {
+    e.preventDefault();
+    await fetch('/api/logout', { method: 'POST' });
+    location.href = '/login.html';
+  };
+
+  loadEmployees().then(loadEntries);
+})();
+</script>
+</body>
+</html>
