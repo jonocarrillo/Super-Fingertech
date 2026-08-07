@@ -397,6 +397,147 @@ def open_entry_for(conn, employee_id):
     ).fetchone()
 
 
+def entry_for_local_day(conn, employee_id, day):
+    """The single day-row for this employee on a local business date (if any)."""
+    start_utc, end_utc = day_bounds_utc(day)
+    return conn.execute(
+        """
+        SELECT * FROM time_entries
+        WHERE employee_id = ?
+          AND clock_in_utc >= ? AND clock_in_utc < ?
+        ORDER BY clock_in_utc DESC
+        LIMIT 1;
+        """,
+        (employee_id, start_utc, end_utc),
+    ).fetchone()
+
+
+ALREADY_PUNCHED_MSG = {
+    "in": "Already clocked in for today",
+    "lunch_out": "Already punched lunch out for today",
+    "lunch_in": "Already punched lunch in for today",
+    "out": "Already clocked out for today",
+}
+
+
+def punch_field_filled(entry, action: str) -> bool:
+    if entry is None:
+        return False
+    if action == "in":
+        return bool(entry["clock_in_utc"])
+    if action == "lunch_out":
+        return bool(entry["lunch_out_utc"])
+    if action == "lunch_in":
+        return bool(entry["lunch_in_utc"])
+    if action == "out":
+        return bool(entry["clock_out_utc"])
+    return False
+
+
+def resolve_punch_target(conn, employee_id):
+    """Decide which day-row and which of the 4 punches applies next.
+
+    Rules:
+    - Only one row per employee per local day.
+    - Exactly one In, Lunch out, Lunch in, Out on that row (first write wins).
+    - If today's row is complete, reject further punches.
+    - An open row from a prior day continues until Out is punched.
+    """
+    today = datetime.now(BIZ_TZ).date()
+    open_entry = open_entry_for(conn, employee_id)
+    today_entry = entry_for_local_day(conn, employee_id, today)
+
+    # Incomplete prior day still open → finish that sequence first
+    if open_entry is not None:
+        open_day = iso_to_local_date(open_entry["clock_in_utc"])
+        action = next_punch_action(open_entry)
+        if punch_field_filled(open_entry, action):
+            return {
+                "ok": False,
+                "code": "already_punched",
+                "action": action,
+                "message": ALREADY_PUNCHED_MSG.get(action, "Already punched"),
+                "entry": open_entry,
+            }
+        return {"ok": True, "action": action, "entry": open_entry, "day": open_day}
+
+    # No open row: today already fully punched?
+    if today_entry is not None and today_entry["clock_out_utc"]:
+        return {
+            "ok": False,
+            "code": "already_complete",
+            "action": "out",
+            "message": "Already finished for today — already clocked out",
+            "entry": today_entry,
+        }
+
+    # Today has an incomplete row that wasn't found as open (shouldn't happen) — resume it
+    if today_entry is not None and not today_entry["clock_out_utc"]:
+        action = next_punch_action(today_entry)
+        if punch_field_filled(today_entry, action):
+            return {
+                "ok": False,
+                "code": "already_punched",
+                "action": action,
+                "message": ALREADY_PUNCHED_MSG.get(action, "Already punched"),
+                "entry": today_entry,
+            }
+        return {"ok": True, "action": action, "entry": today_entry, "day": today}
+
+    # Fresh day → In
+    return {"ok": True, "action": "in", "entry": None, "day": today}
+
+
+def cleanup_extra_day_entries(conn) -> int:
+    """Keep one time_entries row per employee per local day; delete extras.
+
+    Prefers the row with the most punches filled, then highest id.
+    """
+    rows = conn.execute(
+        "SELECT id, employee_id, clock_in_utc, lunch_out_utc, lunch_in_utc, clock_out_utc "
+        "FROM time_entries ORDER BY employee_id, id;"
+    ).fetchall()
+    buckets = {}
+    for r in rows:
+        day = iso_to_local_date(r["clock_in_utc"])
+        if day is None:
+            continue
+        key = (r["employee_id"], day.isoformat())
+        score = sum(
+            1
+            for v in (r["clock_in_utc"], r["lunch_out_utc"], r["lunch_in_utc"], r["clock_out_utc"])
+            if v
+        )
+        buckets.setdefault(key, []).append((score, r["id"]))
+
+    delete_ids = []
+    for _key, items in buckets.items():
+        if len(items) <= 1:
+            continue
+        items.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        # keep best; delete rest
+        for _score, eid in items[1:]:
+            delete_ids.append(eid)
+
+    # Also only allow one open entry per employee
+    open_rows = conn.execute(
+        "SELECT id, employee_id FROM time_entries WHERE clock_out_utc IS NULL ORDER BY id DESC;"
+    ).fetchall()
+    seen_open = set()
+    for r in open_rows:
+        if r["employee_id"] in seen_open:
+            delete_ids.append(r["id"])
+        else:
+            seen_open.add(r["employee_id"])
+
+    delete_ids = list(dict.fromkeys(delete_ids))  # unique, preserve order
+    for eid in delete_ids:
+        conn.execute("DELETE FROM time_entries WHERE id = ?;", (eid,))
+    if delete_ids:
+        conn.commit()
+    return len(delete_ids)
+
+
 def list_currently_present(conn):
     """Employees with an open day (not clocked out yet)."""
     rows = conn.execute(
@@ -1031,8 +1172,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"ok": True, "time": now_iso(), "db": db.db_stats(conn)})
                 return
 
-            # ---- Kiosk (public): 4 punches — IN → LUNCH OUT → LUNCH IN → OUT ----
-            # Each punch type is written once into its own column (never overwrites earlier punches).
+            # ---- Kiosk (public): exactly 4 punches per person per day ----
+            # In → Lunch out → Lunch in → Out. First save wins; repeats are rejected.
             if method == "POST" and path == "/api/clock":
                 body = self.read_json_body()
                 employee_number = str(body.get("employeeNumber") or "").strip()
@@ -1043,8 +1184,23 @@ class Handler(BaseHTTPRequestHandler):
                 if not employee or not employee["active"]:
                     self.send_error_json(404, "employee number not recognized")
                     return
-                open_entry = open_entry_for(conn, employee["id"])
-                action = next_punch_action(open_entry)
+
+                target = resolve_punch_target(conn, employee["id"])
+                if not target["ok"]:
+                    self.send_json(
+                        409,
+                        {
+                            "error": target["message"],
+                            "code": target["code"],
+                            "action": target.get("action"),
+                            "employeeName": employee["name"],
+                            "alreadyPunched": True,
+                        },
+                    )
+                    return
+
+                action = target["action"]
+                open_entry = target.get("entry")
                 now = now_iso()
                 labels = {
                     "in": "IN",
@@ -1052,13 +1208,34 @@ class Handler(BaseHTTPRequestHandler):
                     "lunch_in": "LUNCH IN",
                     "out": "OUT",
                 }
+                next_after = {
+                    "in": "lunch_out",
+                    "lunch_out": "lunch_in",
+                    "lunch_in": "out",
+                    "out": None,
+                }
                 timing = evaluate_punch_timing(employee, action, now)
                 timing_note = timing["note"] if timing else None
                 timing_label = timing["label"] if timing else None
                 note_col = PUNCH_NOTE_COLUMNS[action]
 
+                def already_response(act):
+                    self.send_json(
+                        409,
+                        {
+                            "error": ALREADY_PUNCHED_MSG.get(act, "Already punched"),
+                            "code": "already_punched",
+                            "action": act,
+                            "employeeName": employee["name"],
+                            "alreadyPunched": True,
+                        },
+                    )
+
                 if action == "in":
-                    # First punch of the day — creates the day row; later punches only fill empty slots.
+                    # Guard: one In per local day
+                    if open_entry is not None and punch_field_filled(open_entry, "in"):
+                        already_response("in")
+                        return
                     conn.execute(
                         f"INSERT INTO time_entries (employee_id, clock_in_utc, {note_col}) VALUES (?, ?, ?);",
                         (employee["id"], now, timing_note),
@@ -1071,7 +1248,7 @@ class Handler(BaseHTTPRequestHandler):
                             "label": labels["in"],
                             "employeeName": employee["name"],
                             "clockIn": now,
-                            "nextAction": "lunch_out",
+                            "nextAction": next_after["in"],
                             "hours": None,
                             "scheduleNote": timing_note,
                             "scheduleLabel": timing_label,
@@ -1081,11 +1258,14 @@ class Handler(BaseHTTPRequestHandler):
                     return
 
                 entry_id = open_entry["id"]
+                if punch_field_filled(open_entry, action):
+                    already_response(action)
+                    return
+
                 if action == "lunch_out":
-                    # Only set lunch_out if still empty (preserve first lunch-out time)
-                    conn.execute(
+                    cur = conn.execute(
                         f"""
-                        UPDATE time_entries SET lunch_out_utc = COALESCE(lunch_out_utc, ?),
+                        UPDATE time_entries SET lunch_out_utc = ?,
                                {note_col} = COALESCE({note_col}, ?),
                                updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                         WHERE id = ? AND lunch_out_utc IS NULL;
@@ -1093,6 +1273,9 @@ class Handler(BaseHTTPRequestHandler):
                         (now, timing_note, entry_id),
                     )
                     conn.commit()
+                    if cur.rowcount == 0:
+                        already_response("lunch_out")
+                        return
                     row = conn.execute("SELECT * FROM time_entries WHERE id = ?;", (entry_id,)).fetchone()
                     hours = worked_hours(row["clock_in_utc"], row["lunch_out_utc"], None, None)
                     self.send_json(
@@ -1103,7 +1286,7 @@ class Handler(BaseHTTPRequestHandler):
                             "employeeName": employee["name"],
                             "clockIn": row["clock_in_utc"],
                             "lunchOut": row["lunch_out_utc"],
-                            "nextAction": "lunch_in",
+                            "nextAction": next_after["lunch_out"],
                             "hours": hours,
                             "scheduleNote": timing_note,
                             "scheduleLabel": timing_label,
@@ -1113,9 +1296,9 @@ class Handler(BaseHTTPRequestHandler):
                     return
 
                 if action == "lunch_in":
-                    conn.execute(
+                    cur = conn.execute(
                         f"""
-                        UPDATE time_entries SET lunch_in_utc = COALESCE(lunch_in_utc, ?),
+                        UPDATE time_entries SET lunch_in_utc = ?,
                                {note_col} = COALESCE({note_col}, ?),
                                updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                         WHERE id = ? AND lunch_in_utc IS NULL;
@@ -1123,6 +1306,9 @@ class Handler(BaseHTTPRequestHandler):
                         (now, timing_note, entry_id),
                     )
                     conn.commit()
+                    if cur.rowcount == 0:
+                        already_response("lunch_in")
+                        return
                     row = conn.execute("SELECT * FROM time_entries WHERE id = ?;", (entry_id,)).fetchone()
                     hours = worked_hours(row["clock_in_utc"], row["lunch_out_utc"], row["lunch_in_utc"], None)
                     self.send_json(
@@ -1134,7 +1320,7 @@ class Handler(BaseHTTPRequestHandler):
                             "clockIn": row["clock_in_utc"],
                             "lunchOut": row["lunch_out_utc"],
                             "lunchIn": row["lunch_in_utc"],
-                            "nextAction": "out",
+                            "nextAction": next_after["lunch_in"],
                             "hours": hours,
                             "scheduleNote": timing_note,
                             "scheduleLabel": timing_label,
@@ -1143,10 +1329,10 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     return
 
-                # action == "out" — closes the day; earlier punches stay as first-saved values
-                conn.execute(
+                # action == "out"
+                cur = conn.execute(
                     f"""
-                    UPDATE time_entries SET clock_out_utc = COALESCE(clock_out_utc, ?),
+                    UPDATE time_entries SET clock_out_utc = ?,
                            {note_col} = COALESCE({note_col}, ?),
                            updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                     WHERE id = ? AND clock_out_utc IS NULL;
@@ -1154,6 +1340,9 @@ class Handler(BaseHTTPRequestHandler):
                     (now, timing_note, entry_id),
                 )
                 conn.commit()
+                if cur.rowcount == 0:
+                    already_response("out")
+                    return
                 row = conn.execute("SELECT * FROM time_entries WHERE id = ?;", (entry_id,)).fetchone()
                 hours = worked_hours(
                     row["clock_in_utc"],
@@ -1171,13 +1360,19 @@ class Handler(BaseHTTPRequestHandler):
                         "lunchOut": row["lunch_out_utc"],
                         "lunchIn": row["lunch_in_utc"],
                         "clockOut": row["clock_out_utc"],
-                        "nextAction": "in",
+                        "nextAction": None,
                         "hours": hours,
                         "scheduleNote": timing_note,
                         "scheduleLabel": timing_label,
                         "scheduleStatus": timing["status"] if timing else None,
                     },
                 )
+                return
+
+            # Admin: clean duplicate day rows (one In/Lunch/Out set per day)
+            if method == "POST" and path == "/api/admin/cleanup-duplicates":
+                removed = cleanup_extra_day_entries(conn)
+                self.send_json(200, {"ok": True, "removed": removed})
                 return
 
             # ---- Admin: employees ----

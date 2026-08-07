@@ -459,7 +459,14 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         playErrorTone();
-        padError.textContent = data.error || 'Could not punch';
+        const errMsg = data.error || 'Could not punch';
+        padError.textContent = errMsg;
+        // Speak "already clocked in" style messages
+        if (data.alreadyPunched || res.status === 409) {
+          const who = (data.employeeName || '').trim();
+          speak(who ? (who + '. ' + errMsg) : errMsg);
+          toast(who ? (who + ' — ' + errMsg) : errMsg, true);
+        }
         submitting = false;
         render();
         return;
