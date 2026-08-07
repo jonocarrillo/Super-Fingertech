@@ -8,7 +8,7 @@
 </head>
 <body>
 <header class="topbar">
-  <h1>🕒 Employee Clock — Admin</h1>
+  <h1>Employee Clock — Admin</h1>
   <nav>
     <a href="/clock.html">Kiosk</a>
     <a href="#" id="logoutBtn">Logout</a>
@@ -16,7 +16,88 @@
 </header>
 
 <main>
-  <section class="card card-employees">
+  <!-- Always visible: who's on site now -->
+  <section class="card card-present" id="presentCard">
+    <div class="present-header">
+      <h2>Currently clocked in</h2>
+      <div class="present-stats">
+        <span class="stat" id="presentCount">0 on site</span>
+        <span class="stat muted" id="presentWorking">0 working</span>
+        <span class="stat muted" id="presentLunch">0 at lunch</span>
+        <button type="button" class="btn secondary small" id="presentRefreshBtn">Refresh</button>
+      </div>
+    </div>
+    <div class="present-board" id="presentBoard">
+      <p class="muted empty-present">No one is clocked in right now.</p>
+    </div>
+  </section>
+
+  <!-- Tabs -->
+  <nav class="tabs" role="tablist" aria-label="Admin sections">
+    <button type="button" class="tab active" data-tab="daily" role="tab" aria-selected="true">Daily attendance</button>
+    <button type="button" class="tab" data-tab="biweekly" role="tab" aria-selected="false">Biweekly</button>
+    <button type="button" class="tab" data-tab="employees" role="tab" aria-selected="false">Employees</button>
+    <button type="button" class="tab" data-tab="entries" role="tab" aria-selected="false">Edit punches</button>
+  </nav>
+
+  <!-- Daily attendance (default / focused) -->
+  <section class="card tab-panel active" id="panel-daily" data-panel="daily">
+    <h2>Daily attendance</h2>
+    <div class="filters">
+      <div class="field"><label>Date</label>
+        <input id="dailyDate" type="date">
+      </div>
+      <div class="field"><label>Employee</label>
+        <select id="dailyEmployee"><option value="">All</option></select>
+      </div>
+      <button class="btn" id="dailyRunBtn">Run report</button>
+      <button class="btn secondary" id="dailyExportBtn">Export CSV</button>
+    </div>
+    <p class="muted hint" id="dailyMeta"></p>
+    <div id="dailyTableWrap">
+      <table class="data" id="dailyTable">
+        <thead>
+          <tr>
+            <th>Date</th><th>Employee</th><th>In</th><th>Lunch out</th>
+            <th>Lunch in</th><th>Out</th><th>Hours</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="dailyBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Biweekly -->
+  <section class="card tab-panel" id="panel-biweekly" data-panel="biweekly" hidden>
+    <h2>Biweekly summary</h2>
+    <div class="filters">
+      <div class="field"><label>Period end (14 days back)</label>
+        <input id="biweeklyDate" type="date">
+      </div>
+      <div class="field"><label>Employee</label>
+        <select id="biweeklyEmployee"><option value="">All</option></select>
+      </div>
+      <button class="btn" id="biweeklyRunBtn">Run report</button>
+      <button class="btn secondary" id="biweeklyExportBtn">Export CSV</button>
+      <button class="btn secondary" id="biweeklyExportTotalsBtn">CSV + totals</button>
+    </div>
+    <p class="muted hint" id="biweeklyMeta"></p>
+    <div id="biweeklySummary"></div>
+    <div id="biweeklyTableWrap">
+      <table class="data" id="biweeklyTable">
+        <thead>
+          <tr>
+            <th>Date</th><th>Employee</th><th>In</th><th>Lunch out</th>
+            <th>Lunch in</th><th>Out</th><th>Hours</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="biweeklyBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Employees -->
+  <section class="card tab-panel" id="panel-employees" data-panel="employees" hidden>
     <h2>Employees</h2>
     <p class="hint">Add by <strong>name only</strong>. Punch code is assigned automatically.</p>
     <div id="employeeTableWrap">
@@ -31,37 +112,9 @@
     </div>
   </section>
 
-  <section class="card card-reports">
-    <h2>Reports <span class="muted">(daily / biweekly)</span></h2>
-    <div class="filters">
-      <div class="field"><label>Report</label>
-        <select id="reportType">
-          <option value="daily">Daily attendance</option>
-          <option value="biweekly">Biweekly summary</option>
-        </select>
-      </div>
-      <div class="field" id="reportDateField"><label id="reportDateLabel">Date</label>
-        <input id="reportDate" type="date">
-      </div>
-      <div class="field"><label>Employee</label>
-        <select id="reportEmployee"><option value="">All</option></select>
-      </div>
-      <button class="btn" id="reportRunBtn">Run</button>
-      <button class="btn secondary" id="reportExportBtn">Export CSV</button>
-      <button class="btn secondary" id="reportExportDetailBtn" style="display:none;">CSV + totals</button>
-    </div>
-    <p class="muted hint" id="reportMeta"></p>
-    <div id="reportSummary"></div>
-    <div id="reportTableWrap">
-      <table class="data" id="reportTable">
-        <thead id="reportHead"></thead>
-        <tbody id="reportBody"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="card card-entries">
-    <h2>Time entries <span class="muted">(edit punches)</span></h2>
+  <!-- Edit punches -->
+  <section class="card tab-panel" id="panel-entries" data-panel="entries" hidden>
+    <h2>Edit punches</h2>
     <div class="filters">
       <div class="field"><label>Employee</label>
         <select id="filterEmployee"><option value="">All</option></select>
@@ -118,6 +171,11 @@
     const p = n => String(n).padStart(2, '0');
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
+  function todayISO() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
 
   let employees = [];
 
@@ -130,20 +188,77 @@
     return res;
   }
 
+  // ---- Tabs ----
+  function showTab(name) {
+    document.querySelectorAll('.tab').forEach(btn => {
+      const on = btn.dataset.tab === name;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.tab-panel').forEach(panel => {
+      const on = panel.dataset.panel === name;
+      panel.classList.toggle('active', on);
+      if (on) panel.removeAttribute('hidden');
+      else panel.setAttribute('hidden', '');
+    });
+    try { localStorage.setItem('clockAdminTab', name); } catch (e) {}
+    if (name === 'daily') runDaily().catch(() => {});
+    if (name === 'biweekly') runBiweekly().catch(() => {});
+    if (name === 'entries') loadEntries().catch(() => {});
+    if (name === 'employees') loadEmployees().catch(() => {});
+  }
+
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => showTab(btn.dataset.tab));
+  });
+
+  // ---- Currently present ----
+  async function loadPresent() {
+    const res = await api('/api/admin/present');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return;
+    const people = data.people || [];
+    $('presentCount').textContent = data.count + ' on site';
+    $('presentWorking').textContent = (data.working || 0) + ' working';
+    $('presentLunch').textContent = (data.atLunch || 0) + ' at lunch';
+
+    const board = $('presentBoard');
+    if (!people.length) {
+      board.innerHTML = '<p class="muted empty-present">No one is clocked in right now.</p>';
+      return;
+    }
+    board.innerHTML = people.map(p => {
+      const cls = p.status === 'at_lunch' ? 'chip lunch' : 'chip working';
+      const when = p.status === 'at_lunch'
+        ? 'Lunch since ' + esc(p.lunchOutLocal || '—')
+        : (p.lunchInLocal
+          ? 'Back ' + esc(p.lunchInLocal) + ' · in ' + esc(p.clockInLocal || '—')
+          : 'In since ' + esc(p.clockInLocal || '—'));
+      return '<div class="' + cls + '">' +
+        '<div class="chip-name">' + esc(p.employeeName) +
+          (p.employeeNumber ? ' <span class="muted">#' + esc(p.employeeNumber) + '</span>' : '') +
+        '</div>' +
+        '<div class="chip-status">' + esc(p.statusLabel) + '</div>' +
+        '<div class="chip-meta">' + when + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  $('presentRefreshBtn').onclick = () => loadPresent().catch(err => toast(String(err.message || err), true));
+
+  // ---- Employees ----
   async function loadEmployees() {
     const res = await api('/api/admin/employees');
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { toast(data.error || 'Failed to load employees', true); return; }
     employees = data.employees || [];
     renderEmployeeTable();
-    renderEmployeeFilter();
+    renderEmployeeFilters();
   }
 
   function employeeLabel(e) {
-    const num = e.employeeNumber != null ? e.employeeNumber : e;
-    const name = e.name != null ? e.name : '';
-    if (name && num) return esc(name) + ' <span class="muted">#' + esc(num) + '</span>';
-    return esc(name || num || '');
+    if (e.name && e.employeeNumber) return esc(e.name) + ' <span class="muted">#' + esc(e.employeeNumber) + '</span>';
+    return esc(e.name || '');
   }
 
   function renderEmployeeTable() {
@@ -154,7 +269,8 @@
         '<td>' + badge + '</td>' +
         '<td class="muted">' + esc(fmtDT(e.createdAt)) + '</td>' +
         '<td class="row-actions">' +
-          '<button class="btn small ' + (e.active ? 'danger' : 'green') + '" data-act="toggle" data-id="' + e.id + '">' + (e.active ? 'Deactivate' : 'Reactivate') + '</button>' +
+          '<button class="btn small ' + (e.active ? 'danger' : 'green') + '" data-act="toggle" data-id="' + e.id + '">' +
+            (e.active ? 'Deactivate' : 'Reactivate') + '</button>' +
         '</td></tr>';
     }).join('') || '<tr><td colspan="4" class="muted">No employees yet.</td></tr>';
 
@@ -170,133 +286,17 @@
     });
   }
 
-  function renderEmployeeFilter() {
+  function renderEmployeeFilters() {
     const opts = '<option value="">All</option>' +
       employees.map(e => '<option value="' + e.id + '">' + esc(e.name) + '</option>').join('');
-    ['filterEmployee', 'reportEmployee'].forEach(id => {
+    ['dailyEmployee', 'biweeklyEmployee', 'filterEmployee'].forEach(id => {
       const sel = $(id);
       if (!sel) return;
-      const current = sel.value;
+      const cur = sel.value;
       sel.innerHTML = opts;
-      sel.value = current;
+      sel.value = cur;
     });
   }
-
-  // ---- Reports (TCMS-style daily / biweekly) ----
-  function todayISO() {
-    const d = new Date();
-    const p = n => String(n).padStart(2, '0');
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
-  }
-
-  function syncReportControls() {
-    const type = $('reportType').value;
-    const detailBtn = $('reportExportDetailBtn');
-    if (type === 'biweekly') {
-      $('reportDateLabel').textContent = 'Period end (14 days back)';
-      detailBtn.style.display = '';
-      detailBtn.textContent = 'Export CSV + totals';
-    } else {
-      $('reportDateLabel').textContent = 'Date';
-      detailBtn.style.display = 'none';
-    }
-  }
-
-  /** Shared columns for daily + biweekly (In / Lunch out / Lunch in / Out). */
-  function renderPunchRows(rows) {
-    $('reportHead').innerHTML =
-      '<tr><th>Date</th><th>Employee</th><th>In</th><th>Lunch out</th><th>Lunch in</th><th>Out</th><th>Hours</th><th>Status</th></tr>';
-    $('reportBody').innerHTML = (rows || []).map(r =>
-      '<tr>' +
-        '<td>' + esc(r.date) + '</td>' +
-        '<td>' + esc(r.employeeName) + (r.employeeNumber ? ' <span class="muted">#' + esc(r.employeeNumber) + '</span>' : '') + '</td>' +
-        '<td>' + esc(r.clockInLocal) + '</td>' +
-        '<td>' + esc(r.lunchOutLocal) + '</td>' +
-        '<td>' + esc(r.lunchInLocal) + '</td>' +
-        '<td>' + esc(r.clockOutLocal) + '</td>' +
-        '<td>' + (r.hours != null ? r.hours : '—') + '</td>' +
-        '<td>' + esc(r.status) + '</td>' +
-      '</tr>'
-    ).join('') || '<tr><td colspan="8" class="muted">No punches in this range.</td></tr>';
-  }
-
-  async function runReport() {
-    const type = $('reportType').value;
-    const day = $('reportDate').value || todayISO();
-    const emp = $('reportEmployee').value;
-    let url;
-    if (type === 'daily') {
-      url = '/api/admin/reports/daily?date=' + encodeURIComponent(day);
-    } else {
-      url = '/api/admin/reports/biweekly?periodEnd=' + encodeURIComponent(day);
-    }
-    if (emp) url += '&employeeId=' + encodeURIComponent(emp);
-    const res = await api(url);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { toast(data.error || 'Report failed', true); return; }
-    renderReport(data);
-  }
-
-  function renderReport(data) {
-    const meta = $('reportMeta');
-    const head = $('reportHead');
-    const body = $('reportBody');
-    const sum = $('reportSummary');
-
-    if (data.report === 'daily') {
-      meta.textContent = data.title + ' · ' + data.date + ' · ' + (data.timezone || '') +
-        ' · ' + data.rowCount + ' row(s) · ' + data.totalHours + ' total hrs' +
-        (data.incompleteCount ? ' · ' + data.incompleteCount + ' incomplete' : '');
-      sum.innerHTML = '';
-      renderPunchRows(data.rows);
-      return;
-    }
-
-    if (data.report === 'biweekly') {
-      meta.textContent = data.title + ' · ' + data.periodStart + ' → ' + data.periodEnd +
-        ' · ' + (data.timezone || '') + ' · ' + (data.rowCount || 0) + ' day-row(s) · ' +
-        (data.employeeCount || 0) + ' employee(s) · ' + data.totalHours + ' total hrs' +
-        (data.incompleteCount ? ' · ' + data.incompleteCount + ' incomplete' : '');
-      // Totals strip (still punch grid below — same columns as daily)
-      const totals = data.totals || [];
-      if (totals.length) {
-        sum.innerHTML = '<table class="data"><thead><tr><th>Employee</th><th>Days</th><th>Complete</th><th>Incomplete</th><th>Total hours</th></tr></thead><tbody>' +
-          totals.map(t =>
-            '<tr><td>' + esc(t.employeeName) + (t.employeeNumber ? ' <span class="muted">#' + esc(t.employeeNumber) + '</span>' : '') +
-            '</td><td>' + t.daysWorked + '</td><td>' + t.completeDays + '</td><td>' + t.incompleteDays +
-            '</td><td><strong>' + t.hours + '</strong></td></tr>'
-          ).join('') +
-          '</tbody></table><p class="muted" style="margin-top:10px;">Day-by-day punches (same columns as daily):</p>';
-      } else {
-        sum.innerHTML = '';
-      }
-      renderPunchRows(data.rows);
-    }
-  }
-
-  function reportExportUrl(kind) {
-    const type = $('reportType').value;
-    const day = $('reportDate').value || todayISO();
-    const emp = $('reportEmployee').value;
-    let url;
-    if (type === 'daily') {
-      url = '/api/admin/reports/daily.csv?date=' + encodeURIComponent(day);
-    } else if (kind === 'detail') {
-      url = '/api/admin/reports/biweekly-detail.csv?periodEnd=' + encodeURIComponent(day);
-    } else {
-      url = '/api/admin/reports/biweekly.csv?periodEnd=' + encodeURIComponent(day);
-    }
-    if (emp) url += '&employeeId=' + encodeURIComponent(emp);
-    return url;
-  }
-
-  $('reportType').onchange = syncReportControls;
-  $('reportRunBtn').onclick = () => runReport().catch(err => toast(String(err.message || err), true));
-  $('reportExportBtn').onclick = () => { window.location = reportExportUrl('summary'); };
-  $('reportExportDetailBtn').onclick = () => { window.location = reportExportUrl('detail'); };
-  $('reportDate').value = todayISO();
-  syncReportControls();
-
 
   $('addEmployeeBtn').onclick = async () => {
     const name = $('newName').value.trim();
@@ -308,11 +308,95 @@
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { toast(data.error || 'Failed to add employee', true); return; }
     $('newName').value = '';
-    const code = data.employeeNumber ? ' — punch code #' + data.employeeNumber : '';
-    toast('Added ' + (data.name || name) + code);
+    toast('Added ' + (data.name || name) + (data.employeeNumber ? ' — punch code #' + data.employeeNumber : ''));
     loadEmployees();
   };
 
+  // ---- Daily report (primary) ----
+  function punchRowHtml(r) {
+    return '<tr>' +
+      '<td>' + esc(r.date) + '</td>' +
+      '<td>' + esc(r.employeeName) + (r.employeeNumber ? ' <span class="muted">#' + esc(r.employeeNumber) + '</span>' : '') + '</td>' +
+      '<td>' + esc(r.clockInLocal) + '</td>' +
+      '<td>' + esc(r.lunchOutLocal) + '</td>' +
+      '<td>' + esc(r.lunchInLocal) + '</td>' +
+      '<td>' + esc(r.clockOutLocal) + '</td>' +
+      '<td>' + (r.hours != null ? r.hours : '—') + '</td>' +
+      '<td>' + esc(r.status) + '</td>' +
+    '</tr>';
+  }
+
+  async function runDaily() {
+    const day = $('dailyDate').value || todayISO();
+    const emp = $('dailyEmployee').value;
+    let url = '/api/admin/reports/daily?date=' + encodeURIComponent(day);
+    if (emp) url += '&employeeId=' + encodeURIComponent(emp);
+    const res = await api(url);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Report failed', true); return; }
+    $('dailyMeta').textContent = (data.title || 'Daily') + ' · ' + data.date +
+      ' · ' + (data.rowCount || 0) + ' row(s) · ' + (data.totalHours || 0) + ' total hrs' +
+      (data.incompleteCount ? ' · ' + data.incompleteCount + ' incomplete' : '');
+    $('dailyBody').innerHTML = (data.rows || []).map(punchRowHtml).join('') ||
+      '<tr><td colspan="8" class="muted">No punches this day.</td></tr>';
+  }
+
+  $('dailyRunBtn').onclick = () => runDaily().catch(err => toast(String(err.message || err), true));
+  $('dailyExportBtn').onclick = () => {
+    const day = $('dailyDate').value || todayISO();
+    const emp = $('dailyEmployee').value;
+    let url = '/api/admin/reports/daily.csv?date=' + encodeURIComponent(day);
+    if (emp) url += '&employeeId=' + encodeURIComponent(emp);
+    window.location = url;
+  };
+  $('dailyDate').value = todayISO();
+
+  // ---- Biweekly ----
+  async function runBiweekly() {
+    const day = $('biweeklyDate').value || todayISO();
+    const emp = $('biweeklyEmployee').value;
+    let url = '/api/admin/reports/biweekly?periodEnd=' + encodeURIComponent(day);
+    if (emp) url += '&employeeId=' + encodeURIComponent(emp);
+    const res = await api(url);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Report failed', true); return; }
+    $('biweeklyMeta').textContent = (data.title || 'Biweekly') + ' · ' + data.periodStart + ' → ' + data.periodEnd +
+      ' · ' + (data.rowCount || 0) + ' day-row(s) · ' + (data.totalHours || 0) + ' total hrs';
+    const totals = data.totals || [];
+    if (totals.length) {
+      $('biweeklySummary').innerHTML =
+        '<table class="data"><thead><tr><th>Employee</th><th>Days</th><th>Complete</th><th>Incomplete</th><th>Total hours</th></tr></thead><tbody>' +
+        totals.map(t =>
+          '<tr><td>' + esc(t.employeeName) + (t.employeeNumber ? ' <span class="muted">#' + esc(t.employeeNumber) + '</span>' : '') +
+          '</td><td>' + t.daysWorked + '</td><td>' + t.completeDays + '</td><td>' + t.incompleteDays +
+          '</td><td><strong>' + t.hours + '</strong></td></tr>'
+        ).join('') +
+        '</tbody></table><p class="muted hint" style="margin-top:10px;">Day-by-day punches:</p>';
+    } else {
+      $('biweeklySummary').innerHTML = '';
+    }
+    $('biweeklyBody').innerHTML = (data.rows || []).map(punchRowHtml).join('') ||
+      '<tr><td colspan="8" class="muted">No punches in this pay period.</td></tr>';
+  }
+
+  $('biweeklyRunBtn').onclick = () => runBiweekly().catch(err => toast(String(err.message || err), true));
+  $('biweeklyExportBtn').onclick = () => {
+    const day = $('biweeklyDate').value || todayISO();
+    const emp = $('biweeklyEmployee').value;
+    let url = '/api/admin/reports/biweekly.csv?periodEnd=' + encodeURIComponent(day);
+    if (emp) url += '&employeeId=' + encodeURIComponent(emp);
+    window.location = url;
+  };
+  $('biweeklyExportTotalsBtn').onclick = () => {
+    const day = $('biweeklyDate').value || todayISO();
+    const emp = $('biweeklyEmployee').value;
+    let url = '/api/admin/reports/biweekly-detail.csv?periodEnd=' + encodeURIComponent(day);
+    if (emp) url += '&employeeId=' + encodeURIComponent(emp);
+    window.location = url;
+  };
+  $('biweeklyDate').value = todayISO();
+
+  // ---- Edit punches ----
   function entriesQuery() {
     const params = new URLSearchParams();
     if ($('filterEmployee').value) params.set('employeeId', $('filterEmployee').value);
@@ -348,12 +432,12 @@
     $('entriesBody').innerHTML = entries.map(e => {
       return '<tr data-id="' + e.id + '">' +
         '<td>' + esc(e.employeeName) + ' ' + statusBadge(e) + '</td>' +
-        '<td><input type="datetime-local" class="ci" value="' + toLocalInputValue(e.clockIn) + '" style="min-width:160px"></td>' +
-        '<td><input type="datetime-local" class="lo" value="' + toLocalInputValue(e.lunchOut) + '" style="min-width:160px"></td>' +
-        '<td><input type="datetime-local" class="li" value="' + toLocalInputValue(e.lunchIn) + '" style="min-width:160px"></td>' +
-        '<td><input type="datetime-local" class="co" value="' + toLocalInputValue(e.clockOut) + '" style="min-width:160px"></td>' +
+        '<td><input type="datetime-local" class="ci" value="' + toLocalInputValue(e.clockIn) + '"></td>' +
+        '<td><input type="datetime-local" class="lo" value="' + toLocalInputValue(e.lunchOut) + '"></td>' +
+        '<td><input type="datetime-local" class="li" value="' + toLocalInputValue(e.lunchIn) + '"></td>' +
+        '<td><input type="datetime-local" class="co" value="' + toLocalInputValue(e.clockOut) + '"></td>' +
         '<td>' + (e.hours != null ? e.hours : '—') + '</td>' +
-        '<td><input type="text" class="note" value="' + esc(e.note || '') + '" placeholder="note" style="min-width:100px"></td>' +
+        '<td><input type="text" class="note" value="' + esc(e.note || '') + '" placeholder="note"></td>' +
         '<td class="row-actions">' +
           '<button class="btn small secondary" data-act="save">Save</button>' +
           '<button class="btn small danger" data-act="delete">Delete</button>' +
@@ -367,7 +451,6 @@
           const v = row.querySelector(sel).value;
           return v ? new Date(v).toISOString() : null;
         };
-        const note = row.querySelector('.note').value;
         const res = await api('/api/admin/entries/' + id, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -375,20 +458,22 @@
             lunchOut: val('.lo'),
             lunchIn: val('.li'),
             clockOut: val('.co'),
-            note
+            note: row.querySelector('.note').value
           })
         });
-        if (res.ok) { toast('Entry updated'); loadEntries(); } else { toast('Save failed', true); }
+        if (res.ok) { toast('Entry updated'); loadEntries(); loadPresent(); }
+        else toast('Save failed', true);
       };
       row.querySelector('[data-act="delete"]').onclick = async () => {
         if (!confirm('Delete this entry?')) return;
         const res = await api('/api/admin/entries/' + id, { method: 'DELETE' });
-        if (res.ok) { toast('Entry deleted'); loadEntries(); } else { toast('Delete failed', true); }
+        if (res.ok) { toast('Entry deleted'); loadEntries(); loadPresent(); }
+        else toast('Delete failed', true);
       };
     });
   }
 
-  $('filterBtn').onclick = loadEntries;
+  $('filterBtn').onclick = () => loadEntries().catch(err => toast(String(err.message || err), true));
   $('exportBtn').onclick = () => { window.location = '/api/admin/export.csv?' + entriesQuery(); };
   $('logoutBtn').onclick = async (e) => {
     e.preventDefault();
@@ -396,10 +481,24 @@
     location.href = '/login.html?next=/admin.html';
   };
 
+  // Boot: always load present + employees; open Daily first
+  let startTab = 'daily';
+  try {
+    const saved = localStorage.getItem('clockAdminTab');
+    if (saved && ['daily', 'biweekly', 'employees', 'entries'].includes(saved)) startTab = saved;
+  } catch (e) {}
+
   loadEmployees()
-    .then(loadEntries)
-    .then(runReport)
+    .then(() => loadPresent())
+    .then(() => showTab(startTab === 'daily' ? 'daily' : startTab))
+    .then(() => {
+      // Prefer daily as default when first visit
+      if (!localStorage.getItem('clockAdminTab')) showTab('daily');
+    })
     .catch(() => {});
+
+  // Auto-refresh who's in every 30s
+  setInterval(() => { loadPresent().catch(() => {}); }, 30000);
 })();
 </script>
 </body>

@@ -262,6 +262,56 @@ def open_entry_for(conn, employee_id):
     ).fetchone()
 
 
+def list_currently_present(conn):
+    """Employees with an open day (not clocked out yet)."""
+    rows = conn.execute(
+        """
+        SELECT e.id AS employeeId, e.name AS employeeName, e.employee_number AS employeeNumber,
+               t.id AS entryId, t.clock_in_utc AS clockIn, t.lunch_out_utc AS lunchOut,
+               t.lunch_in_utc AS lunchIn, t.clock_out_utc AS clockOut
+        FROM time_entries t
+        JOIN employees e ON e.id = t.employee_id
+        WHERE t.clock_out_utc IS NULL AND e.active = 1
+        ORDER BY e.name COLLATE NOCASE;
+        """
+    ).fetchall()
+    present = []
+    for r in rows:
+        status = status_label(
+            {
+                "clockIn": r["clockIn"],
+                "lunchOut": r["lunchOut"],
+                "lunchIn": r["lunchIn"],
+                "clockOut": r["clockOut"],
+            }
+        )
+        # Map to simpler presence labels
+        if r["lunchOut"] and not r["lunchIn"]:
+            presence = "at_lunch"
+            presenceLabel = "At lunch"
+        else:
+            presence = "working"
+            presenceLabel = "Working"
+        present.append(
+            {
+                "employeeId": r["employeeId"],
+                "employeeName": r["employeeName"],
+                "employeeNumber": r["employeeNumber"] or "",
+                "entryId": r["entryId"],
+                "clockIn": r["clockIn"],
+                "lunchOut": r["lunchOut"],
+                "lunchIn": r["lunchIn"],
+                "clockInLocal": fmt_local_time(r["clockIn"]),
+                "lunchOutLocal": fmt_local_time(r["lunchOut"]),
+                "lunchInLocal": fmt_local_time(r["lunchIn"]),
+                "status": presence,
+                "statusLabel": presenceLabel,
+                "detailStatus": status,
+            }
+        )
+    return present
+
+
 def entry_to_dict(r, employee_name=None):
     clock_in = r["clockIn"] if "clockIn" in r.keys() else r["clock_in_utc"]
     lunch_out = r["lunchOut"] if "lunchOut" in r.keys() else r["lunch_out_utc"]
@@ -1105,6 +1155,21 @@ class Handler(BaseHTTPRequestHandler):
 
             if method == "POST" and path == "/api/admin/backups/run":
                 self.send_json(200, db.run_db_backup(force=True))
+                return
+
+            # ---- Admin: who's currently clocked in ----
+            if method == "GET" and path == "/api/admin/present":
+                people = list_currently_present(conn)
+                self.send_json(
+                    200,
+                    {
+                        "count": len(people),
+                        "working": sum(1 for p in people if p["status"] == "working"),
+                        "atLunch": sum(1 for p in people if p["status"] == "at_lunch"),
+                        "people": people,
+                        "asOf": now_iso(),
+                    },
+                )
                 return
 
             # ---- Admin: TCMS-style reports ----

@@ -83,6 +83,137 @@ main {
   gap: 16px;
 }
 
+/* ----- Tabs ----- */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 650;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tab:hover { background: var(--surface-2); color: var(--green-deep); }
+
+.tab.active {
+  background: var(--green);
+  color: #fff;
+}
+
+.tab-panel[hidden] { display: none !important; }
+.tab-panel.active { display: block; }
+
+/* ----- Currently clocked in board ----- */
+.card-present {
+  border-color: #b7dfc3;
+  background: linear-gradient(180deg, #f7fcf8 0%, #fff 40%);
+}
+
+.present-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.present-header h2 {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--green-deep);
+}
+
+.present-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.present-stats .stat {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--green-deep);
+}
+
+.present-board {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  min-height: 56px;
+}
+
+.empty-present {
+  margin: 4px 0;
+  width: 100%;
+}
+
+.chip {
+  min-width: 160px;
+  max-width: 240px;
+  flex: 1 1 160px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.chip.working {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.chip.lunch {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.chip-name {
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.chip-status {
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--green-dark);
+  margin-bottom: 4px;
+}
+
+.chip.lunch .chip-status { color: #b45309; }
+
+.chip-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 /* ----- Cards ----- */
 .card {
   background: var(--surface);
