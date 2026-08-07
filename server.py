@@ -1017,7 +1017,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_error_json(400, "that employee number is already in use")
                     return
                 self.send_json(200, {"ok": True, "employeeNumber": employee_number})
-                return            if employee_match and method == "DELETE":
+                return
+            if employee_match and method == "DELETE":
                 employee_id = int(employee_match.group(1))
                 conn.execute(
                     "UPDATE employees SET active = 0, updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
