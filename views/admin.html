@@ -83,9 +83,19 @@
 
   let employees = [];
 
+  async function api(url, opts) {
+    const res = await fetch(url, Object.assign({ credentials: 'same-origin', cache: 'no-store' }, opts || {}));
+    if (res.status === 401) {
+      location.href = '/login.html?next=' + encodeURIComponent(location.pathname || '/admin.html');
+      throw new Error('login required');
+    }
+    return res;
+  }
+
   async function loadEmployees() {
-    const res = await fetch('/api/admin/employees', { cache: 'no-store' });
-    const data = await res.json();
+    const res = await api('/api/admin/employees');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Failed to load employees', true); return; }
     employees = data.employees || [];
     renderEmployeeTable();
     renderEmployeeFilter();
@@ -108,7 +118,7 @@
     $('employeeBody').querySelectorAll('button[data-act="toggle"]').forEach(btn => {
       btn.onclick = async () => {
         const emp = employees.find(e => e.id === Number(btn.dataset.id));
-        await fetch('/api/admin/employees/' + btn.dataset.id, {
+        await api('/api/admin/employees/' + btn.dataset.id, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ active: !emp.active })
         });
@@ -120,7 +130,7 @@
         const employeeNumber = prompt('New employee number (1-8 digits):');
         if (!employeeNumber) return;
         if (!/^\d{1,8}$/.test(employeeNumber)) { toast('Employee number must be 1-8 digits', true); return; }
-        const res = await fetch('/api/admin/employees/' + btn.dataset.id, {
+        const res = await api('/api/admin/employees/' + btn.dataset.id, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ employeeNumber })
         });
@@ -143,7 +153,7 @@
     const employeeNumber = $('newNumber').value.trim();
     if (!name) { toast('Name required', true); return; }
     if (!/^\d{1,8}$/.test(employeeNumber)) { toast('Employee number must be 1-8 digits', true); return; }
-    const res = await fetch('/api/admin/employees', {
+    const res = await api('/api/admin/employees', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, employeeNumber })
     });
@@ -164,8 +174,9 @@
   }
 
   async function loadEntries() {
-    const res = await fetch('/api/admin/entries?' + entriesQuery(), { cache: 'no-store' });
-    const data = await res.json();
+    const res = await api('/api/admin/entries?' + entriesQuery());
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Failed to load entries', true); return; }
     renderSummary(data.summary || []);
     renderEntries(data.entries || []);
   }
@@ -198,7 +209,7 @@
         const ci = row.querySelector('.ci').value;
         const co = row.querySelector('.co').value;
         const note = row.querySelector('.note').value;
-        const res = await fetch('/api/admin/entries/' + id, {
+        const res = await api('/api/admin/entries/' + id, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ clockIn: ci ? new Date(ci).toISOString() : null, clockOut: co ? new Date(co).toISOString() : null, note })
         });
@@ -206,7 +217,7 @@
       };
       row.querySelector('[data-act="delete"]').onclick = async () => {
         if (!confirm('Delete this entry?')) return;
-        const res = await fetch('/api/admin/entries/' + id, { method: 'DELETE' });
+        const res = await api('/api/admin/entries/' + id, { method: 'DELETE' });
         if (res.ok) { toast('Entry deleted'); loadEntries(); } else { toast('Delete failed', true); }
       };
     });
@@ -216,11 +227,11 @@
   $('exportBtn').onclick = () => { window.location = '/api/admin/export.csv?' + entriesQuery(); };
   $('logoutBtn').onclick = async (e) => {
     e.preventDefault();
-    await fetch('/api/logout', { method: 'POST' });
-    location.href = '/login.html';
+    await api('/api/logout', { method: 'POST' }).catch(() => null);
+    location.href = '/login.html?next=/admin.html';
   };
 
-  loadEmployees().then(loadEntries);
+  loadEmployees().then(loadEntries).catch(() => {});
 })();
 </script>
 </body>

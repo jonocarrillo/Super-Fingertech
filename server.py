@@ -359,7 +359,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.is_logged_in():
             return True
         if method == "GET" and not path.startswith("/api/"):
-            next_path = path
+            # Always send people back to the real dashboard path after login.
+            # Using next=/ on the admin hostname used to look "broken" (blank /
+            # vs /admin.html) and is easy to confuse with the kiosk.
+            if path in ("/", "/admin", "/admin.html") or is_admin_host(self.request_host()):
+                next_path = "/admin.html"
+            else:
+                next_path = path or "/admin.html"
             self.send_response(302)
             self.send_header("Location", "/login.html?next=" + next_path.replace(" ", "%20"))
             self.end_headers()
@@ -611,11 +617,13 @@ class Handler(BaseHTTPRequestHandler):
         # ---- Static views/assets (outside the db lock) ----
         if method == "GET":
             host = self.request_host()
-            # Friendly hostnames: http://clock/  vs  http://admin/
+            # Friendly hostname http://admin/ → real dashboard path
             if path == "/" and is_admin_host(host):
-                self.serve_file(VIEWS_DIR / "admin.html")
+                self.send_response(302)
+                self.send_header("Location", "/admin.html")
+                self.end_headers()
                 return
-            if path in ("/", "/clock.html") or (path == "/" and is_clock_host(host)):
+            if path in ("/", "/clock.html"):
                 self.serve_file(VIEWS_DIR / "clock.html")
                 return
             if path in ("/admin.html", "/admin"):
