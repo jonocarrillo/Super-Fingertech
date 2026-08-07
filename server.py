@@ -15,11 +15,12 @@ import os
 import re
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
+from zoneinfo import ZoneInfo
 
 import db
 
@@ -30,6 +31,11 @@ PUBLIC_DIR = PROJECT_ROOT / "public"
 VIEWS_DIR = PROJECT_ROOT / "views"
 MAX_JSON_BYTES = 200_000
 EMPLOYEE_NUMBER_RE = re.compile(r"^\d{1,8}$")
+# Business-day timezone for daily / biweekly reports (TCMS-style attendance).
+try:
+    BIZ_TZ = ZoneInfo(os.environ.get("CLOCK_TZ", "America/Los_Angeles"))
+except Exception:
+    BIZ_TZ = timezone(timedelta(hours=-7))
 
 # ---------- Admin login (cookie session) ----------
 # Same pattern as weighbridge-data-entry: one password -> cookie session for the
@@ -316,6 +322,301 @@ def summarize(entries):
         cur["hours"] = round(cur["hours"] + e["hours"], 2)
         cur["shifts"] += 1
     return sorted(by_employee.values(), key=lambda s: s["employeeName"].lower())
+
+
+def parse_date_param(value):
+    """Parse YYYY-MM-DD to date, or None."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        return None
+
+
+def iso_to_local_dt(iso: str):
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BIZ_TZ)
+
+
+def iso_to_local_date(iso: str):
+    dt = iso_to_local_dt(iso)
+    return dt.date() if dt else None
+
+
+def fmt_local_time(iso: str) -> str:
+    dt = iso_to_local_dt(iso)
+    if not dt:
+        return ""
+    return dt.strftime("%I:%M %p").lstrip("0")
+
+
+def fmt_local_datetime(iso: str) -> str:
+    dt = iso_to_local_dt(iso)
+    if not dt:
+        return ""
+    return dt.strftime("%Y-%m-%d %I:%M %p").lstrip("0").replace(" 0", " ")
+
+
+def day_bounds_utc(day: date):
+    """Return (start_iso, end_iso) covering local business day in UTC Z form."""
+    start = datetime(day.year, day.month, day.day, 0, 0, 0, tzinfo=BIZ_TZ)
+    end = start + timedelta(days=1)
+    start_utc = start.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    end_utc = end.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return start_utc, end_utc
+
+
+def biweekly_range(period_end: date | None = None):
+    """14-day pay window ending on period_end (default: today local)."""
+    end = period_end or datetime.now(BIZ_TZ).date()
+    start = end - timedelta(days=13)
+    return start, end
+
+
+def status_label(entry: dict) -> str:
+    if entry.get("clockOut"):
+        return "Complete"
+    if entry.get("lunchOut") and not entry.get("lunchIn"):
+        return "At lunch"
+    if entry.get("lunchIn") and not entry.get("clockOut"):
+        return "After lunch"
+    if entry.get("clockIn"):
+        return "Working"
+    return "Incomplete"
+
+
+def list_entries_for_local_range(conn, start_day: date, end_day: date, employee_id=None):
+    """Entries whose clock-in falls on a local business day in [start_day, end_day]."""
+    start_utc, _ = day_bounds_utc(start_day)
+    _, end_utc = day_bounds_utc(end_day)
+    # end_utc is midnight after end_day, so use < end_utc
+    clauses = ["t.clock_in_utc >= ?", "t.clock_in_utc < ?"]
+    params = [start_utc, end_utc]
+    if employee_id:
+        clauses.append("t.employee_id = ?")
+        params.append(int(employee_id))
+    where = "WHERE " + " AND ".join(clauses)
+    rows = conn.execute(
+        f"""
+        SELECT t.id, t.employee_id AS employeeId, e.name AS employeeName,
+               e.employee_number AS employeeNumber,
+               t.clock_in_utc AS clockIn, t.lunch_out_utc AS lunchOut,
+               t.lunch_in_utc AS lunchIn, t.clock_out_utc AS clockOut,
+               t.note AS note, t.edited AS edited
+        FROM time_entries t
+        JOIN employees e ON e.id = t.employee_id
+        {where}
+        ORDER BY e.name COLLATE NOCASE, t.clock_in_utc;
+        """,
+        params,
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = entry_to_dict(r)
+        d["employeeNumber"] = r["employeeNumber"]
+        d["workDate"] = (iso_to_local_date(d["clockIn"]) or start_day).isoformat()
+        d["statusLabel"] = status_label(d)
+        result.append(d)
+    return result
+
+
+def build_daily_report(conn, day: date, employee_id=None):
+    """TCMS-style daily attendance detail for one business day."""
+    entries = list_entries_for_local_range(conn, day, day, employee_id=employee_id)
+    rows = []
+    for e in entries:
+        rows.append(
+            {
+                "date": e["workDate"],
+                "employeeId": e["employeeId"],
+                "employeeNumber": e.get("employeeNumber") or "",
+                "employeeName": e["employeeName"],
+                "clockIn": e["clockIn"],
+                "lunchOut": e["lunchOut"],
+                "lunchIn": e["lunchIn"],
+                "clockOut": e["clockOut"],
+                "clockInLocal": fmt_local_time(e["clockIn"]),
+                "lunchOutLocal": fmt_local_time(e["lunchOut"]),
+                "lunchInLocal": fmt_local_time(e["lunchIn"]),
+                "clockOutLocal": fmt_local_time(e["clockOut"]),
+                "hours": e["hours"],
+                "status": e["statusLabel"],
+                "note": e.get("note") or "",
+                "edited": e.get("edited", False),
+            }
+        )
+    total_hours = round(sum(r["hours"] or 0 for r in rows), 2)
+    incomplete = sum(1 for r in rows if r["status"] != "Complete")
+    return {
+        "report": "daily",
+        "title": "Daily Attendance Report",
+        "date": day.isoformat(),
+        "timezone": str(getattr(BIZ_TZ, "key", BIZ_TZ)),
+        "rowCount": len(rows),
+        "totalHours": total_hours,
+        "incompleteCount": incomplete,
+        "rows": rows,
+    }
+
+
+def build_biweekly_report(conn, period_end: date | None = None, employee_id=None):
+    """TCMS-style biweekly summary: per-employee totals over 14 days."""
+    start, end = biweekly_range(period_end)
+    entries = list_entries_for_local_range(conn, start, end, employee_id=employee_id)
+    by_emp = {}
+    for e in entries:
+        key = e["employeeId"]
+        cur = by_emp.setdefault(
+            key,
+            {
+                "employeeId": e["employeeId"],
+                "employeeNumber": e.get("employeeNumber") or "",
+                "employeeName": e["employeeName"],
+                "daysWorked": 0,
+                "completeDays": 0,
+                "incompleteDays": 0,
+                "hours": 0.0,
+                "days": [],
+            },
+        )
+        day_hours = e["hours"]
+        complete = e["statusLabel"] == "Complete"
+        cur["daysWorked"] += 1
+        if complete:
+            cur["completeDays"] += 1
+        else:
+            cur["incompleteDays"] += 1
+        if day_hours is not None:
+            cur["hours"] = round(cur["hours"] + day_hours, 2)
+        cur["days"].append(
+            {
+                "date": e["workDate"],
+                "clockInLocal": fmt_local_time(e["clockIn"]),
+                "lunchOutLocal": fmt_local_time(e["lunchOut"]),
+                "lunchInLocal": fmt_local_time(e["lunchIn"]),
+                "clockOutLocal": fmt_local_time(e["clockOut"]),
+                "hours": day_hours,
+                "status": e["statusLabel"],
+            }
+        )
+    rows = sorted(by_emp.values(), key=lambda r: r["employeeName"].lower())
+    total_hours = round(sum(r["hours"] for r in rows), 2)
+    return {
+        "report": "biweekly",
+        "title": "Biweekly Attendance Summary",
+        "periodStart": start.isoformat(),
+        "periodEnd": end.isoformat(),
+        "timezone": str(getattr(BIZ_TZ, "key", BIZ_TZ)),
+        "employeeCount": len(rows),
+        "totalHours": total_hours,
+        "rows": rows,
+        "detailEntries": [
+            {
+                "date": e["workDate"],
+                "employeeNumber": e.get("employeeNumber") or "",
+                "employeeName": e["employeeName"],
+                "clockInLocal": fmt_local_time(e["clockIn"]),
+                "lunchOutLocal": fmt_local_time(e["lunchOut"]),
+                "lunchInLocal": fmt_local_time(e["lunchIn"]),
+                "clockOutLocal": fmt_local_time(e["clockOut"]),
+                "hours": e["hours"],
+                "status": e["statusLabel"],
+            }
+            for e in entries
+        ],
+    }
+
+
+def daily_report_csv(report: dict) -> str:
+    lines = [
+        f"# {report['title']}",
+        f"# Date,{report['date']}",
+        f"# Timezone,{report['timezone']}",
+        f"# Total hours,{report['totalHours']}",
+        "Date,Emp #,Employee,In,Lunch Out,Lunch In,Out,Hours,Status,Note",
+    ]
+    for r in report["rows"]:
+        lines.append(
+            ",".join(
+                csv_escape(v)
+                for v in (
+                    r["date"],
+                    r["employeeNumber"],
+                    r["employeeName"],
+                    r["clockInLocal"],
+                    r["lunchOutLocal"],
+                    r["lunchInLocal"],
+                    r["clockOutLocal"],
+                    r["hours"] if r["hours"] is not None else "",
+                    r["status"],
+                    r["note"],
+                )
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def biweekly_report_csv(report: dict, detail: bool = False) -> str:
+    lines = [
+        f"# {report['title']}",
+        f"# Period,{report['periodStart']} to {report['periodEnd']}",
+        f"# Timezone,{report['timezone']}",
+        f"# Total hours,{report['totalHours']}",
+    ]
+    if detail:
+        lines.append("Date,Emp #,Employee,In,Lunch Out,Lunch In,Out,Hours,Status")
+        for r in report["detailEntries"]:
+            lines.append(
+                ",".join(
+                    csv_escape(v)
+                    for v in (
+                        r["date"],
+                        r["employeeNumber"],
+                        r["employeeName"],
+                        r["clockInLocal"],
+                        r["lunchOutLocal"],
+                        r["lunchInLocal"],
+                        r["clockOutLocal"],
+                        r["hours"] if r["hours"] is not None else "",
+                        r["status"],
+                    )
+                )
+            )
+    else:
+        lines.append("Emp #,Employee,Days Worked,Complete Days,Incomplete Days,Total Hours")
+        for r in report["rows"]:
+            lines.append(
+                ",".join(
+                    csv_escape(v)
+                    for v in (
+                        r["employeeNumber"],
+                        r["employeeName"],
+                        r["daysWorked"],
+                        r["completeDays"],
+                        r["incompleteDays"],
+                        r["hours"],
+                    )
+                )
+            )
+    return "\n".join(lines) + "\n"
+
+
+def send_csv_response(handler, filename: str, body: str):
+    data = body.encode("utf-8")
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/csv; charset=utf-8")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+    handler.end_headers()
+    handler.wfile.write(data)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -765,6 +1066,46 @@ class Handler(BaseHTTPRequestHandler):
 
             if method == "POST" and path == "/api/admin/backups/run":
                 self.send_json(200, db.run_db_backup(force=True))
+                return
+
+            # ---- Admin: TCMS-style reports ----
+            if method == "GET" and path in ("/api/admin/reports/daily", "/api/admin/reports/daily.csv"):
+                day = parse_date_param(qp("date")) or datetime.now(BIZ_TZ).date()
+                emp = qp("employeeId")
+                report = build_daily_report(conn, day, employee_id=emp)
+                if path.endswith(".csv"):
+                    send_csv_response(
+                        self,
+                        f"daily-attendance-{day.isoformat()}.csv",
+                        daily_report_csv(report),
+                    )
+                    return
+                self.send_json(200, report)
+                return
+
+            if method == "GET" and path in (
+                "/api/admin/reports/biweekly",
+                "/api/admin/reports/biweekly.csv",
+                "/api/admin/reports/biweekly-detail.csv",
+            ):
+                period_end = parse_date_param(qp("periodEnd") or qp("end") or qp("date"))
+                emp = qp("employeeId")
+                report = build_biweekly_report(conn, period_end=period_end, employee_id=emp)
+                if path.endswith("biweekly-detail.csv"):
+                    send_csv_response(
+                        self,
+                        f"biweekly-detail-{report['periodStart']}_to_{report['periodEnd']}.csv",
+                        biweekly_report_csv(report, detail=True),
+                    )
+                    return
+                if path.endswith(".csv"):
+                    send_csv_response(
+                        self,
+                        f"biweekly-summary-{report['periodStart']}_to_{report['periodEnd']}.csv",
+                        biweekly_report_csv(report, detail=False),
+                    )
+                    return
+                self.send_json(200, report)
                 return
 
         # ---- Static views/assets (outside the db lock) ----

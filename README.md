@@ -88,7 +88,18 @@ data/              SQLite DB (created at runtime)
 deploy/            systemd unit
 ```
 
+## Reports (TCMS V2-style)
+
+In **Admin → Reports**:
+
+| Report | What it shows | Export |
+|--------|----------------|--------|
+| **Daily attendance** | One business day: Emp #, In, Lunch out, Lunch in, Out, Hours, Status | CSV |
+| **Biweekly summary** | 14-day pay window ending on selected date: days worked + total hours per employee | Summary CSV + detail CSV |
+
+Timezone for “business day” grouping: `CLOCK_TZ` (default `America/Los_Angeles`).
+
 ## Notes
 
 - Designed to run alongside a weighbridge data-entry app on a different port (default 5050 vs 5000).
-- The kiosk is open on the LAN; only admin screens require login. Employees use their own PIN at the kiosk.
+- The kiosk is open on the LAN; only admin screens require login.

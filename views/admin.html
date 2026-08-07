@@ -32,7 +32,36 @@
   </div>
 
   <div class="card">
-    <h2>Time entries</h2>
+    <h2>Reports <span class="muted" style="font-weight:500;font-size:13px;">(TCMS-style)</span></h2>
+    <div class="filters">
+      <div class="field"><label>Report</label>
+        <select id="reportType">
+          <option value="daily">Daily attendance</option>
+          <option value="biweekly">Biweekly summary</option>
+        </select>
+      </div>
+      <div class="field" id="reportDateField"><label id="reportDateLabel">Date</label>
+        <input id="reportDate" type="date">
+      </div>
+      <div class="field"><label>Employee</label>
+        <select id="reportEmployee"><option value="">All</option></select>
+      </div>
+      <button class="btn" id="reportRunBtn">Run report</button>
+      <button class="btn secondary" id="reportExportBtn">Export CSV</button>
+      <button class="btn secondary" id="reportExportDetailBtn" style="display:none;">Export detail CSV</button>
+    </div>
+    <p class="muted hint" id="reportMeta" style="margin-top:12px;"></p>
+    <div id="reportSummary" style="margin-top:10px;"></div>
+    <div style="overflow-x:auto;margin-top:12px;">
+      <table class="data" id="reportTable">
+        <thead id="reportHead"></thead>
+        <tbody id="reportBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Time entries <span class="muted" style="font-weight:500;font-size:13px;">(edit punches)</span></h2>
     <div class="filters">
       <div class="field"><label>Employee</label>
         <select id="filterEmployee"><option value="">All</option></select>
@@ -150,12 +179,123 @@
   }
 
   function renderEmployeeFilter() {
-    const sel = $('filterEmployee');
-    const current = sel.value;
-    sel.innerHTML = '<option value="">All</option>' +
-      employees.map(e => '<option value="' + e.id + '">' + esc(e.name) + '</option>').join('');
-    sel.value = current;
+    const opts = '<option value="">All</option>' +
+      employees.map(e => '<option value="' + e.id + '">' + esc(e.name) + ' (' + esc(e.employeeNumber) + ')</option>').join('');
+    ['filterEmployee', 'reportEmployee'].forEach(id => {
+      const sel = $(id);
+      if (!sel) return;
+      const current = sel.value;
+      sel.innerHTML = opts;
+      sel.value = current;
+    });
   }
+
+  // ---- Reports (TCMS-style daily / biweekly) ----
+  function todayISO() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
+  function syncReportControls() {
+    const type = $('reportType').value;
+    const detailBtn = $('reportExportDetailBtn');
+    if (type === 'biweekly') {
+      $('reportDateLabel').textContent = 'Period end (14 days back)';
+      detailBtn.style.display = '';
+    } else {
+      $('reportDateLabel').textContent = 'Date';
+      detailBtn.style.display = 'none';
+    }
+  }
+
+  async function runReport() {
+    const type = $('reportType').value;
+    const day = $('reportDate').value || todayISO();
+    const emp = $('reportEmployee').value;
+    let url;
+    if (type === 'daily') {
+      url = '/api/admin/reports/daily?date=' + encodeURIComponent(day);
+    } else {
+      url = '/api/admin/reports/biweekly?periodEnd=' + encodeURIComponent(day);
+    }
+    if (emp) url += '&employeeId=' + encodeURIComponent(emp);
+    const res = await api(url);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Report failed', true); return; }
+    renderReport(data);
+  }
+
+  function renderReport(data) {
+    const meta = $('reportMeta');
+    const head = $('reportHead');
+    const body = $('reportBody');
+    const sum = $('reportSummary');
+
+    if (data.report === 'daily') {
+      meta.textContent = data.title + ' · ' + data.date + ' · ' + (data.timezone || '') +
+        ' · ' + data.rowCount + ' row(s) · ' + data.totalHours + ' total hrs' +
+        (data.incompleteCount ? ' · ' + data.incompleteCount + ' incomplete' : '');
+      sum.innerHTML = '';
+      head.innerHTML = '<tr><th>Date</th><th>Emp #</th><th>Employee</th><th>In</th><th>Lunch out</th><th>Lunch in</th><th>Out</th><th>Hours</th><th>Status</th></tr>';
+      body.innerHTML = (data.rows || []).map(r =>
+        '<tr>' +
+          '<td>' + esc(r.date) + '</td>' +
+          '<td>' + esc(r.employeeNumber) + '</td>' +
+          '<td>' + esc(r.employeeName) + '</td>' +
+          '<td>' + esc(r.clockInLocal) + '</td>' +
+          '<td>' + esc(r.lunchOutLocal) + '</td>' +
+          '<td>' + esc(r.lunchInLocal) + '</td>' +
+          '<td>' + esc(r.clockOutLocal) + '</td>' +
+          '<td>' + (r.hours != null ? r.hours : '—') + '</td>' +
+          '<td>' + esc(r.status) + '</td>' +
+        '</tr>'
+      ).join('') || '<tr><td colspan="9" class="muted">No punches this day.</td></tr>';
+      return;
+    }
+
+    if (data.report === 'biweekly') {
+      meta.textContent = data.title + ' · ' + data.periodStart + ' → ' + data.periodEnd +
+        ' · ' + (data.timezone || '') + ' · ' + data.employeeCount + ' employee(s) · ' +
+        data.totalHours + ' total hrs';
+      sum.innerHTML = '<p class="muted">Summary per employee for the 14-day pay window ending on the selected date. Use “Export detail CSV” for day-by-day punches (like TCMS daily audit).</p>';
+      head.innerHTML = '<tr><th>Emp #</th><th>Employee</th><th>Days worked</th><th>Complete</th><th>Incomplete</th><th>Total hours</th></tr>';
+      body.innerHTML = (data.rows || []).map(r =>
+        '<tr>' +
+          '<td>' + esc(r.employeeNumber) + '</td>' +
+          '<td>' + esc(r.employeeName) + '</td>' +
+          '<td>' + r.daysWorked + '</td>' +
+          '<td>' + r.completeDays + '</td>' +
+          '<td>' + r.incompleteDays + '</td>' +
+          '<td><strong>' + r.hours + '</strong></td>' +
+        '</tr>'
+      ).join('') || '<tr><td colspan="6" class="muted">No punches in this pay period.</td></tr>';
+    }
+  }
+
+  function reportExportUrl(kind) {
+    const type = $('reportType').value;
+    const day = $('reportDate').value || todayISO();
+    const emp = $('reportEmployee').value;
+    let url;
+    if (type === 'daily') {
+      url = '/api/admin/reports/daily.csv?date=' + encodeURIComponent(day);
+    } else if (kind === 'detail') {
+      url = '/api/admin/reports/biweekly-detail.csv?periodEnd=' + encodeURIComponent(day);
+    } else {
+      url = '/api/admin/reports/biweekly.csv?periodEnd=' + encodeURIComponent(day);
+    }
+    if (emp) url += '&employeeId=' + encodeURIComponent(emp);
+    return url;
+  }
+
+  $('reportType').onchange = syncReportControls;
+  $('reportRunBtn').onclick = () => runReport().catch(err => toast(String(err.message || err), true));
+  $('reportExportBtn').onclick = () => { window.location = reportExportUrl('summary'); };
+  $('reportExportDetailBtn').onclick = () => { window.location = reportExportUrl('detail'); };
+  $('reportDate').value = todayISO();
+  syncReportControls();
+
 
   $('addEmployeeBtn').onclick = async () => {
     const name = $('newName').value.trim();
@@ -257,7 +397,10 @@
     location.href = '/login.html?next=/admin.html';
   };
 
-  loadEmployees().then(loadEntries).catch(() => {});
+  loadEmployees()
+    .then(loadEntries)
+    .then(runReport)
+    .catch(() => {});
 })();
 </script>
 </body>
