@@ -329,6 +329,8 @@
         '<td class="muted">' + scheduleTimes(e) + '</td>' +
         '<td class="row-actions">' +
           '<button class="btn small secondary" data-act="schedule" data-id="' + e.id + '">Schedule</button>' +
+          '<button class="btn small secondary" data-act="resetpin" data-id="' + e.id + '">' +
+            (e.hasPin ? 'Reset PIN' : 'No PIN') + '</button>' +
           '<button class="btn small ' + (e.active ? 'danger' : 'green') + '" data-act="toggle" data-id="' + e.id + '">' +
             (e.active ? 'Deactivate' : 'Reactivate') + '</button>' +
         '</td></tr>';
@@ -348,6 +350,19 @@
       btn.onclick = () => {
         const emp = employees.find(e => e.id === Number(btn.dataset.id));
         if (emp) openScheduleEditor(emp);
+      };
+    });
+    $('employeeBody').querySelectorAll('button[data-act="resetpin"]').forEach(btn => {
+      btn.onclick = async () => {
+        const emp = employees.find(e => e.id === Number(btn.dataset.id));
+        if (!emp || !emp.hasPin) { toast('No PIN set yet — they choose it at the kiosk'); return; }
+        if (!confirm('Reset PIN for ' + emp.name + '? They will choose a new one at the kiosk.')) return;
+        const res = await api('/api/admin/employees/' + emp.id, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resetPin: true })
+        });
+        if (res.ok) { toast('PIN reset — they set a new one at kiosk'); loadEmployees(); }
+        else toast('Reset failed', true);
       };
     });
   }

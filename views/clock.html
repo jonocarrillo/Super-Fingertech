@@ -268,8 +268,9 @@
 
   <main>
     <div class="pad">
-      <h2>Enter punch code</h2>
-      <p class="lead">Your code is shown next to your name in Admin.</p>
+      <h2 id="padTitle">Enter punch code</h2>
+      <p class="lead" id="padLead">Your code is shown next to your name in Admin.</p>
+      <p class="lead" id="padWho" style="display:none;color:#86efac;font-weight:700;"></p>
 
       <div class="steps" aria-hidden="true">
         <span>1 In</span>
@@ -296,7 +297,7 @@
         <button type="button" class="util" data-k="back">⌫</button>
       </div>
 
-      <button type="button" class="submit" id="submitBtn" disabled>Punch</button>
+      <button type="button" class="submit" id="submitBtn" disabled>Next</button>
     </div>
   </main>
 
@@ -309,10 +310,18 @@
   const display = $('numberDisplay');
   const padError = $('padError');
   const submitBtn = $('submitBtn');
-  const MAX_LEN = 8;
+  const MAX_CODE_LEN = 8;
+  const MAX_PIN_LEN = 8;
+  const MIN_PIN_LEN = 4;
   const EASTER_EGG_CODE = '43212346';
 
+  // Flow: code → (setup_pin → setup_pin2) or pin → punch
+  let step = 'code'; // code | setup_pin | setup_pin2 | pin
   let number = '';
+  let pin = '';
+  let pendingCode = '';
+  let pendingName = '';
+  let setupPinOnce = '';
   let submitting = false;
   let eggFlipped = false;
 
@@ -443,21 +452,68 @@
   tickClock();
   setInterval(tickClock, 1000);
 
-  function render() {
-    if (number) {
-      display.textContent = number;
-      display.classList.remove('placeholder');
-    } else {
-      display.textContent = '••••';
-      display.classList.add('placeholder');
-    }
-    submitBtn.disabled = !number || submitting;
+  function currentValue() {
+    return (step === 'code') ? number : pin;
   }
 
-  function reset() {
-    number = '';
+  function setStep(next) {
+    step = next;
+    pin = '';
     padError.textContent = '';
+    const who = $('padWho');
+    if (step === 'code') {
+      $('padTitle').textContent = 'Enter punch code';
+      $('padLead').textContent = 'Your code is shown next to your name in Admin.';
+      who.style.display = 'none';
+      submitBtn.textContent = 'Next';
+      pendingCode = '';
+      pendingName = '';
+      setupPinOnce = '';
+    } else if (step === 'setup_pin') {
+      $('padTitle').textContent = 'Choose your PIN';
+      $('padLead').textContent = '4–8 digits. You will use this every time you punch.';
+      who.style.display = '';
+      who.textContent = pendingName;
+      submitBtn.textContent = 'Continue';
+    } else if (step === 'setup_pin2') {
+      $('padTitle').textContent = 'Confirm your PIN';
+      $('padLead').textContent = 'Enter the same PIN again.';
+      who.style.display = '';
+      who.textContent = pendingName;
+      submitBtn.textContent = 'Save PIN';
+    } else if (step === 'pin') {
+      $('padTitle').textContent = 'Enter your PIN';
+      $('padLead').textContent = 'Your personal PIN — not the punch code.';
+      who.style.display = '';
+      who.textContent = pendingName;
+      submitBtn.textContent = 'Punch';
+    }
     render();
+  }
+
+  function render() {
+    const val = currentValue();
+    const isPinStep = step !== 'code';
+    if (val) {
+      display.textContent = isPinStep ? '•'.repeat(val.length) : val;
+      display.classList.remove('placeholder');
+    } else {
+      display.textContent = isPinStep ? 'PIN' : '••••';
+      display.classList.add('placeholder');
+    }
+    if (step === 'code') {
+      submitBtn.disabled = !number || submitting;
+    } else if (step === 'setup_pin' || step === 'setup_pin2') {
+      submitBtn.disabled = pin.length < MIN_PIN_LEN || submitting;
+    } else {
+      submitBtn.disabled = pin.length < MIN_PIN_LEN || submitting;
+    }
+  }
+
+  function resetAll() {
+    number = '';
+    pin = '';
+    setStep('code');
   }
 
   function triggerEasterEgg() {
@@ -466,24 +522,19 @@
     playSuccessTone();
     speak(eggFlipped ? 'Upside down mode' : 'Right side up');
     toast(eggFlipped ? '🙃 Upside down!' : '🙂 Right side up');
-    reset();
+    resetAll();
   }
 
-  function maybeEasterEgg() {
+  async function lookupCode() {
+    if (!number || submitting) return;
     if (number === EASTER_EGG_CODE) {
       triggerEasterEgg();
-      return true;
+      return;
     }
-    return false;
-  }
-
-  async function submit() {
-    if (!number || submitting) return;
-    if (maybeEasterEgg()) return;
     submitting = true;
     render();
     try {
-      const res = await fetch('/api/clock', {
+      const res = await fetch('/api/kiosk/lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employeeNumber: number })
@@ -491,36 +542,21 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         playErrorTone();
-        const errMsg = data.error || 'Could not punch';
-        padError.textContent = errMsg;
-        // Speak "already clocked in" style messages
-        if (data.alreadyPunched || res.status === 409) {
-          const who = (data.employeeName || '').trim();
-          speak(who ? (who + '. ' + errMsg) : errMsg);
-          toast(who ? (who + ' — ' + errMsg) : errMsg, true);
-        }
+        padError.textContent = data.error || 'Code not found';
         submitting = false;
         render();
         return;
       }
-      playSuccessTone();
-      speakPunch(data);
-      reset();
-      const label = data.label || (data.action || '').toUpperCase().replace('_', ' ');
-      let msg = data.employeeName + ' — ' + label + ' @ ' + fmtTime(
-        data.clockOut || data.lunchIn || data.lunchOut || data.clockIn
-      );
-      if (data.scheduleLabel) {
-        msg += ' · ' + data.scheduleLabel;
-      } else if (data.scheduleNote) {
-        msg += ' · ' + data.scheduleNote;
+      pendingCode = number;
+      pendingName = data.employeeName || '';
+      number = '';
+      if (data.needsPinSetup || !data.hasPin) {
+        setStep('setup_pin');
+        speak(pendingName + ', choose a PIN');
+        toast(pendingName + ' — choose a 4–8 digit PIN');
+      } else {
+        setStep('pin');
       }
-      if (data.action === 'out' && data.hours != null) {
-        msg += ' · ' + data.hours + ' hrs worked';
-      } else if (data.action === 'lunch_out' && data.hours != null) {
-        msg += ' · morning ' + data.hours + ' hrs';
-      }
-      toast(msg);
     } catch {
       playErrorTone();
       padError.textContent = 'Network error';
@@ -529,19 +565,145 @@
     render();
   }
 
+  async function saveNewPin() {
+    if (pin.length < MIN_PIN_LEN || submitting) return;
+    if (step === 'setup_pin') {
+      setupPinOnce = pin;
+      pin = '';
+      setStep('setup_pin2');
+      return;
+    }
+    if (pin !== setupPinOnce) {
+      playErrorTone();
+      padError.textContent = 'PINs did not match — try again';
+      setupPinOnce = '';
+      pin = '';
+      setStep('setup_pin');
+      return;
+    }
+    submitting = true;
+    render();
+    try {
+      const res = await fetch('/api/kiosk/set-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeNumber: pendingCode, pin: pin })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        playErrorTone();
+        padError.textContent = data.error || 'Could not save PIN';
+        submitting = false;
+        render();
+        return;
+      }
+      playSuccessTone();
+      speak(pendingName + ', PIN saved');
+      toast('PIN saved — enter it to punch');
+      pin = '';
+      setStep('pin');
+    } catch {
+      playErrorTone();
+      padError.textContent = 'Network error';
+    }
+    submitting = false;
+    render();
+  }
+
+  async function punch() {
+    if (pin.length < MIN_PIN_LEN || submitting || !pendingCode) return;
+    submitting = true;
+    render();
+    try {
+      const res = await fetch('/api/clock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeNumber: pendingCode, pin: pin })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        playErrorTone();
+        const errMsg = data.error || 'Could not punch';
+        padError.textContent = errMsg;
+        if (data.alreadyPunched || res.status === 409) {
+          const who = (data.employeeName || pendingName || '').trim();
+          speak(who ? (who + '. ' + errMsg) : errMsg);
+          toast(who ? (who + ' — ' + errMsg) : errMsg, true);
+        } else if (data.needsPinSetup) {
+          setStep('setup_pin');
+        }
+        submitting = false;
+        pin = '';
+        render();
+        return;
+      }
+      playSuccessTone();
+      speakPunch(data);
+      const label = data.label || (data.action || '').toUpperCase().replace('_', ' ');
+      let msg = data.employeeName + ' — ' + label + ' @ ' + fmtTime(
+        data.clockOut || data.lunchIn || data.lunchOut || data.clockIn
+      );
+      if (data.scheduleLabel) msg += ' · ' + data.scheduleLabel;
+      else if (data.scheduleNote) msg += ' · ' + data.scheduleNote;
+      if (data.action === 'out' && data.hours != null) msg += ' · ' + data.hours + ' hrs worked';
+      else if (data.action === 'lunch_out' && data.hours != null) msg += ' · morning ' + data.hours + ' hrs';
+      toast(msg);
+      resetAll();
+    } catch {
+      playErrorTone();
+      padError.textContent = 'Network error';
+    }
+    submitting = false;
+    render();
+  }
+
+  async function submit() {
+    if (submitting) return;
+    if (step === 'code') return lookupCode();
+    if (step === 'setup_pin' || step === 'setup_pin2') return saveNewPin();
+    if (step === 'pin') return punch();
+  }
+
   $('keypad').addEventListener('click', (e) => {
     const btn = e.target.closest('button');
     if (!btn) return;
     getAudioCtx();
-    primeTTS(); // silent — no enable prompt
+    primeTTS();
     const k = btn.dataset.k;
     padError.textContent = '';
-    if (k === 'clear') { playBackTone(); reset(); return; }
-    if (k === 'back') { playBackTone(); number = number.slice(0, -1); render(); return; }
-    if (number.length >= MAX_LEN) return;
+    if (k === 'clear') {
+      playBackTone();
+      if (step === 'code') {
+        number = '';
+      } else if (step === 'setup_pin' || step === 'setup_pin2' || step === 'pin') {
+        // Clear clears PIN; double-clear / long path: back to code
+        if (!pin) {
+          resetAll();
+          return;
+        }
+        pin = '';
+      }
+      render();
+      return;
+    }
+    if (k === 'back') {
+      playBackTone();
+      if (step === 'code') number = number.slice(0, -1);
+      else pin = pin.slice(0, -1);
+      render();
+      return;
+    }
+    const maxLen = step === 'code' ? MAX_CODE_LEN : MAX_PIN_LEN;
+    if (currentValue().length >= maxLen) return;
     playKeyTone();
-    number += k;
-    render();
+    if (step === 'code') {
+      number += k;
+      render();
+      if (number === EASTER_EGG_CODE) setTimeout(triggerEasterEgg, 80);
+    } else {
+      pin += k;
+      render();
+    }
   });
 
   submitBtn.addEventListener('click', function () {
@@ -549,7 +711,7 @@
     primeTTS();
     submit();
   });
-  render();
+  setStep('code');
 })();
 </script>
 </body>

@@ -13,6 +13,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import sqlite3
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -336,6 +337,51 @@ def evaluate_punch_timing(emp_row, action: str, punch_iso: str) -> dict | None:
     }
 
 
+# ---------- Employee PIN / password (chosen by employee) ----------
+PIN_RE = re.compile(r"^\d{4,8}$")
+
+
+def hash_pin(pin: str, salt: str | None = None) -> tuple[str, str]:
+    """Return (hex_hash, salt). Uses PBKDF2-HMAC-SHA256."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    dig = hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt.encode("utf-8"), 120_000)
+    return dig.hex(), salt
+
+
+def verify_pin(pin: str, pin_hash: str | None, pin_salt: str | None) -> bool:
+    if not pin_hash or not pin_salt or not pin:
+        return False
+    dig, _ = hash_pin(pin, pin_salt)
+    return hmac.compare_digest(dig, pin_hash)
+
+
+def employee_has_pin(emp_row) -> bool:
+    keys = emp_row.keys() if hasattr(emp_row, "keys") else []
+    if "pin_hash" not in keys:
+        return False
+    return bool(emp_row["pin_hash"])
+
+
+def set_employee_pin(conn, employee_id: int, pin: str) -> None:
+    dig, salt = hash_pin(pin)
+    conn.execute(
+        "UPDATE employees SET pin_hash = ?, pin_salt = ?, "
+        "updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
+        (dig, salt, employee_id),
+    )
+    conn.commit()
+
+
+def clear_employee_pin(conn, employee_id: int) -> None:
+    conn.execute(
+        "UPDATE employees SET pin_hash = NULL, pin_salt = NULL, "
+        "updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
+        (employee_id,),
+    )
+    conn.commit()
+
+
 # ---------- Employee + time entry helpers (operate on db.get_db(), caller holds db.lock()) ----------
 def list_all_employees(conn):
     rows = conn.execute(
@@ -344,7 +390,8 @@ def list_all_employees(conn):
         "expected_in AS expectedIn, expected_lunch_out AS expectedLunchOut, "
         "expected_lunch_in AS expectedLunchIn, expected_out AS expectedOut, "
         "COALESCE(grace_early_min, 15) AS graceEarlyMin, "
-        "COALESCE(grace_late_min, 10) AS graceLateMin "
+        "COALESCE(grace_late_min, 10) AS graceLateMin, "
+        "pin_hash AS pinHash "
         "FROM employees ORDER BY name COLLATE NOCASE;"
     ).fetchall()
     return [
@@ -361,6 +408,7 @@ def list_all_employees(conn):
             "expectedOut": r["expectedOut"] or "",
             "graceEarlyMin": int(r["graceEarlyMin"] or 15),
             "graceLateMin": int(r["graceLateMin"] or 10),
+            "hasPin": bool(r["pinHash"]),
         }
         for r in rows
     ]
@@ -1057,6 +1105,10 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path == "/api/clock" and method == "POST":
             return True
+        if path == "/api/kiosk/lookup" and method == "POST":
+            return True
+        if path == "/api/kiosk/set-pin" and method == "POST":
+            return True
         if method == "GET":
             # Admin-named hosts treat "/" as the dashboard (requires login).
             if path == "/" and is_admin_host(self.request_host()):
@@ -1172,17 +1224,84 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"ok": True, "time": now_iso(), "db": db.db_stats(conn)})
                 return
 
+            # ---- Kiosk: look up punch code (does not reveal PIN) ----
+            if method == "POST" and path == "/api/kiosk/lookup":
+                body = self.read_json_body()
+                employee_number = str(body.get("employeeNumber") or "").strip()
+                if not EMPLOYEE_NUMBER_RE.fullmatch(employee_number):
+                    self.send_error_json(400, "employeeNumber must be 1-8 digits")
+                    return
+                # Easter-egg code is kiosk-only UI; still reject here
+                if employee_number == "43212346":
+                    self.send_error_json(404, "employee number not recognized")
+                    return
+                employee = find_employee_by_number(conn, employee_number)
+                if not employee or not employee["active"]:
+                    self.send_error_json(404, "employee number not recognized")
+                    return
+                self.send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "employeeName": employee["name"],
+                        "employeeNumber": employee["employee_number"],
+                        "hasPin": employee_has_pin(employee),
+                        "needsPinSetup": not employee_has_pin(employee),
+                    },
+                )
+                return
+
+            # ---- Kiosk: first-time choose PIN (or change with current PIN) ----
+            if method == "POST" and path == "/api/kiosk/set-pin":
+                body = self.read_json_body()
+                employee_number = str(body.get("employeeNumber") or "").strip()
+                new_pin = str(body.get("pin") or body.get("newPin") or "").strip()
+                current_pin = str(body.get("currentPin") or "").strip()
+                if not EMPLOYEE_NUMBER_RE.fullmatch(employee_number):
+                    self.send_error_json(400, "employeeNumber must be 1-8 digits")
+                    return
+                if not PIN_RE.fullmatch(new_pin):
+                    self.send_error_json(400, "PIN must be 4–8 digits")
+                    return
+                employee = find_employee_by_number(conn, employee_number)
+                if not employee or not employee["active"]:
+                    self.send_error_json(404, "employee number not recognized")
+                    return
+                if employee_has_pin(employee):
+                    if not verify_pin(current_pin, employee["pin_hash"], employee["pin_salt"]):
+                        self.send_error_json(401, "Current PIN is incorrect")
+                        return
+                set_employee_pin(conn, employee["id"], new_pin)
+                self.send_json(200, {"ok": True, "employeeName": employee["name"], "hasPin": True})
+                return
+
             # ---- Kiosk (public): exactly 4 punches per person per day ----
             # In → Lunch out → Lunch in → Out. First save wins; repeats are rejected.
+            # Requires employee PIN (they choose it themselves on first use).
             if method == "POST" and path == "/api/clock":
                 body = self.read_json_body()
                 employee_number = str(body.get("employeeNumber") or "").strip()
+                pin = str(body.get("pin") or body.get("password") or "").strip()
                 if not EMPLOYEE_NUMBER_RE.fullmatch(employee_number):
                     self.send_error_json(400, "employeeNumber must be 1-8 digits")
                     return
                 employee = find_employee_by_number(conn, employee_number)
                 if not employee or not employee["active"]:
                     self.send_error_json(404, "employee number not recognized")
+                    return
+                if not employee_has_pin(employee):
+                    self.send_json(
+                        403,
+                        {
+                            "error": "Choose a PIN first",
+                            "code": "pin_required_setup",
+                            "needsPinSetup": True,
+                            "employeeName": employee["name"],
+                        },
+                    )
+                    return
+                if not PIN_RE.fullmatch(pin) or not verify_pin(pin, employee["pin_hash"], employee["pin_salt"]):
+                    self.send_error_json(401, "Incorrect PIN")
                     return
 
                 target = resolve_punch_target(conn, employee["id"])
@@ -1484,6 +1603,10 @@ class Handler(BaseHTTPRequestHandler):
                 except sqlite3.IntegrityError:
                     self.send_error_json(400, "that employee number is already in use")
                     return
+                # Optional: admin resets PIN so employee can choose a new one at kiosk
+                if body.get("resetPin") is True:
+                    clear_employee_pin(conn, employee_id)
+
                 self.send_json(
                     200,
                     {
@@ -1496,6 +1619,11 @@ class Handler(BaseHTTPRequestHandler):
                         "expectedOut": expected_out or "",
                         "graceEarlyMin": grace_early,
                         "graceLateMin": grace_late,
+                        "hasPin": employee_has_pin(
+                            conn.execute("SELECT pin_hash FROM employees WHERE id = ?;", (employee_id,)).fetchone()
+                        )
+                        if not body.get("resetPin")
+                        else False,
                     },
                 )
                 return

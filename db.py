@@ -120,6 +120,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         ("expected_out", "TEXT"),
         ("grace_early_min", "INTEGER NOT NULL DEFAULT 15"),
         ("grace_late_min", "INTEGER NOT NULL DEFAULT 10"),
+        ("pin_hash", "TEXT"),
+        ("pin_salt", "TEXT"),
     ):
         if col not in emp_cols:
             conn.execute(f"ALTER TABLE employees ADD COLUMN {col} {decl};")
