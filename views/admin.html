@@ -46,7 +46,16 @@
     <div id="summaryWrap"></div>
     <div style="height:14px"></div>
     <table class="data">
-      <thead><tr><th>Employee</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Note</th><th></th></tr></thead>
+      <thead><tr>
+        <th>Employee</th>
+        <th>In</th>
+        <th>Lunch out</th>
+        <th>Lunch in</th>
+        <th>Out</th>
+        <th>Hours</th>
+        <th>Note</th>
+        <th></th>
+      </tr></thead>
       <tbody id="entriesBody"></tbody>
     </table>
   </div>
@@ -188,30 +197,47 @@
       '</tbody></table>';
   }
 
+  function statusBadge(e) {
+    if (e.clockOut) return '<span class="badge out">Done</span>';
+    if (e.lunchOut && !e.lunchIn) return '<span class="badge in">At lunch</span>';
+    if (e.lunchIn && !e.clockOut) return '<span class="badge in">After lunch</span>';
+    if (e.clockIn) return '<span class="badge in">Working</span>';
+    return '';
+  }
+
   function renderEntries(entries) {
     $('entriesBody').innerHTML = entries.map(e => {
-      const status = e.clockOut ? '' : '<span class="badge in">Open</span>';
       return '<tr data-id="' + e.id + '">' +
-        '<td>' + esc(e.employeeName) + '</td>' +
-        '<td><input type="datetime-local" class="ci" value="' + toLocalInputValue(e.clockIn) + '" style="min-width:180px"></td>' +
-        '<td><input type="datetime-local" class="co" value="' + toLocalInputValue(e.clockOut) + '" style="min-width:180px">' + status + '</td>' +
+        '<td>' + esc(e.employeeName) + ' ' + statusBadge(e) + '</td>' +
+        '<td><input type="datetime-local" class="ci" value="' + toLocalInputValue(e.clockIn) + '" style="min-width:160px"></td>' +
+        '<td><input type="datetime-local" class="lo" value="' + toLocalInputValue(e.lunchOut) + '" style="min-width:160px"></td>' +
+        '<td><input type="datetime-local" class="li" value="' + toLocalInputValue(e.lunchIn) + '" style="min-width:160px"></td>' +
+        '<td><input type="datetime-local" class="co" value="' + toLocalInputValue(e.clockOut) + '" style="min-width:160px"></td>' +
         '<td>' + (e.hours != null ? e.hours : '—') + '</td>' +
-        '<td><input type="text" class="note" value="' + esc(e.note || '') + '" placeholder="note" style="min-width:120px"></td>' +
+        '<td><input type="text" class="note" value="' + esc(e.note || '') + '" placeholder="note" style="min-width:100px"></td>' +
         '<td class="row-actions">' +
           '<button class="btn small secondary" data-act="save">Save</button>' +
           '<button class="btn small danger" data-act="delete">Delete</button>' +
         '</td></tr>';
-    }).join('') || '<tr><td colspan="6" class="muted">No entries in range.</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="muted">No entries in range.</td></tr>';
 
     $('entriesBody').querySelectorAll('tr[data-id]').forEach(row => {
       const id = row.dataset.id;
       row.querySelector('[data-act="save"]').onclick = async () => {
-        const ci = row.querySelector('.ci').value;
-        const co = row.querySelector('.co').value;
+        const val = (sel) => {
+          const v = row.querySelector(sel).value;
+          return v ? new Date(v).toISOString() : null;
+        };
         const note = row.querySelector('.note').value;
         const res = await api('/api/admin/entries/' + id, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ clockIn: ci ? new Date(ci).toISOString() : null, clockOut: co ? new Date(co).toISOString() : null, note })
+          body: JSON.stringify({
+            clockIn: val('.ci'),
+            lunchOut: val('.lo'),
+            lunchIn: val('.li'),
+            clockOut: val('.co'),
+            note
+          })
         });
         if (res.ok) { toast('Entry updated'); loadEntries(); } else { toast('Save failed', true); }
       };

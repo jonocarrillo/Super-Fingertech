@@ -62,7 +62,7 @@
 </head>
 <body>
 <header>
-  <h1>🕒 Clock In / Out</h1>
+  <h1>🕒 Time Clock</h1>
   <div style="display:flex; align-items:center; gap:16px;">
     <div class="clock" id="clockTime"></div>
     <a href="/admin.html">Admin</a>
@@ -72,7 +72,7 @@
 <main>
   <div class="pad-card">
     <h2>Enter your employee number</h2>
-    <p class="sub">Punch in your number, then press Clock In / Out</p>
+    <p class="sub">Each day: <strong>In</strong> → <strong>Lunch out</strong> → <strong>Lunch in</strong> → <strong>Out</strong></p>
     <div class="number-display placeholder" id="numberDisplay">— — — —</div>
     <div class="error-msg" id="padError"></div>
     <div class="keypad" id="keypad">
@@ -83,7 +83,7 @@
       <button data-k="0">0</button>
       <button class="back" data-k="back">⌫</button>
     </div>
-    <button class="submit-btn" id="submitBtn" disabled>Clock In / Out</button>
+    <button class="submit-btn" id="submitBtn" disabled>Punch</button>
   </div>
 </main>
 
@@ -181,11 +181,16 @@
       }
       playSuccessTone();
       reset();
-      if (data.action === 'in') {
-        toast(data.employeeName + ' clocked IN at ' + fmtTime(data.clockIn));
-      } else {
-        toast(data.employeeName + ' clocked OUT — ' + (data.hours != null ? data.hours + ' hrs' : ''));
+      const label = data.label || (data.action || '').toUpperCase().replace('_', ' ');
+      let msg = data.employeeName + ' — ' + label + ' @ ' + fmtTime(
+        data.clockOut || data.lunchIn || data.lunchOut || data.clockIn
+      );
+      if (data.action === 'out' && data.hours != null) {
+        msg += ' · ' + data.hours + ' hrs worked';
+      } else if (data.action === 'lunch_out' && data.hours != null) {
+        msg += ' · morning ' + data.hours + ' hrs';
       }
+      toast(msg);
     } catch {
       playErrorTone();
       padError.textContent = 'Network error';

@@ -77,6 +77,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             employee_id INTEGER NOT NULL REFERENCES employees(id),
             clock_in_utc TEXT NOT NULL,
+            lunch_out_utc TEXT,
+            lunch_in_utc TEXT,
             clock_out_utc TEXT,
             note TEXT,
             edited INTEGER NOT NULL DEFAULT 0,
@@ -95,6 +97,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             WHERE clock_out_utc IS NULL;
         """
     )
+    # Migrate older DBs that only had clock_in / clock_out
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(time_entries);").fetchall()}
+    if "lunch_out_utc" not in cols:
+        conn.execute("ALTER TABLE time_entries ADD COLUMN lunch_out_utc TEXT;")
+    if "lunch_in_utc" not in cols:
+        conn.execute("ALTER TABLE time_entries ADD COLUMN lunch_in_utc TEXT;")
     conn.commit()
 
 

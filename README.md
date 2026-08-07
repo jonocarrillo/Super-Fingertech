@@ -4,7 +4,8 @@ Employee clock-in terminal for the LAN. Pure Python 3 stdlib (no pip install) �
 
 ## Features
 
-- **Kiosk clock screen** (`/`) — employees clock in/out with employee number + PIN
+- **Kiosk clock screen** (`/`) — employees punch with employee number in order:
+  **In → Lunch out → Lunch in → Out** (hours exclude lunch)
 - **Admin dashboard** (`/admin.html`) — manage employees, view/edit hours (password protected)
 - **SQLite** with WAL mode and automatic daily backups
 - **systemd unit** for 24/7 deployment

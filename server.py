@@ -160,6 +160,46 @@ def hours_between(start_iso: str, end_iso: str) -> float:
     return round((end - start).total_seconds() / 3600, 2)
 
 
+def worked_hours(clock_in, lunch_out, lunch_in, clock_out):
+    """Net hours worked, excluding lunch.
+
+    Four-punch day:  IN → LUNCH OUT → LUNCH IN → OUT
+      morning = IN → LUNCH OUT
+      afternoon = LUNCH IN → OUT
+
+    Legacy two-punch rows (no lunch fields): IN → OUT.
+    """
+    total = 0.0
+    has_segment = False
+    if clock_in and lunch_out:
+        total += hours_between(clock_in, lunch_out)
+        has_segment = True
+    if lunch_in and clock_out:
+        total += hours_between(lunch_in, clock_out)
+        has_segment = True
+    # Legacy / no lunch taken: single block IN → OUT
+    if clock_in and clock_out and not lunch_out and not lunch_in:
+        total = hours_between(clock_in, clock_out)
+        has_segment = True
+    if not has_segment:
+        return None
+    return round(total, 2)
+
+
+def next_punch_action(entry) -> str:
+    """Return the next punch for an open (or missing) day entry."""
+    if entry is None:
+        return "in"
+    # sqlite3.Row supports dict-style keys
+    if not entry["lunch_out_utc"]:
+        return "lunch_out"
+    if not entry["lunch_in_utc"]:
+        return "lunch_in"
+    if not entry["clock_out_utc"]:
+        return "out"
+    return "in"
+
+
 def csv_escape(value) -> str:
     s = "" if value is None else str(value)
     if any(c in s for c in (",", '"', "\n")):
@@ -195,8 +235,42 @@ def find_employee_by_number(conn, employee_number):
 
 def open_entry_for(conn, employee_id):
     return conn.execute(
-        "SELECT * FROM time_entries WHERE employee_id = ? AND clock_out_utc IS NULL LIMIT 1;", (employee_id,)
+        "SELECT * FROM time_entries WHERE employee_id = ? AND clock_out_utc IS NULL "
+        "ORDER BY clock_in_utc DESC LIMIT 1;",
+        (employee_id,),
     ).fetchone()
+
+
+def entry_to_dict(r, employee_name=None):
+    clock_in = r["clockIn"] if "clockIn" in r.keys() else r["clock_in_utc"]
+    lunch_out = r["lunchOut"] if "lunchOut" in r.keys() else r["lunch_out_utc"]
+    lunch_in = r["lunchIn"] if "lunchIn" in r.keys() else r["lunch_in_utc"]
+    clock_out = r["clockOut"] if "clockOut" in r.keys() else r["clock_out_utc"]
+    name = employee_name if employee_name is not None else (r["employeeName"] if "employeeName" in r.keys() else None)
+    hours = worked_hours(clock_in, lunch_out, lunch_in, clock_out)
+    return {
+        "id": r["id"],
+        "employeeId": r["employeeId"] if "employeeId" in r.keys() else r["employee_id"],
+        "employeeName": name,
+        "clockIn": clock_in,
+        "lunchOut": lunch_out,
+        "lunchIn": lunch_in,
+        "clockOut": clock_out,
+        "note": r["note"] if "note" in r.keys() else None,
+        "edited": bool(r["edited"]) if "edited" in r.keys() else False,
+        "hours": hours,
+        "status": (
+            "complete"
+            if clock_out
+            else "at_lunch"
+            if lunch_out and not lunch_in
+            else "after_lunch"
+            if lunch_in and not clock_out
+            else "working"
+            if clock_in
+            else "unknown"
+        ),
+    }
 
 
 def list_entries(conn, employee_id=None, date_from=None, date_to=None):
@@ -218,7 +292,8 @@ def list_entries(conn, employee_id=None, date_from=None, date_to=None):
     rows = conn.execute(
         f"""
         SELECT t.id, t.employee_id AS employeeId, e.name AS employeeName,
-               t.clock_in_utc AS clockIn, t.clock_out_utc AS clockOut,
+               t.clock_in_utc AS clockIn, t.lunch_out_utc AS lunchOut,
+               t.lunch_in_utc AS lunchIn, t.clock_out_utc AS clockOut,
                t.note AS note, t.edited AS edited
         FROM time_entries t
         JOIN employees e ON e.id = t.employee_id
@@ -227,22 +302,7 @@ def list_entries(conn, employee_id=None, date_from=None, date_to=None):
         """,
         params,
     ).fetchall()
-    result = []
-    for r in rows:
-        hours = hours_between(r["clockIn"], r["clockOut"]) if r["clockOut"] else None
-        result.append(
-            {
-                "id": r["id"],
-                "employeeId": r["employeeId"],
-                "employeeName": r["employeeName"],
-                "clockIn": r["clockIn"],
-                "clockOut": r["clockOut"],
-                "note": r["note"],
-                "edited": bool(r["edited"]),
-                "hours": hours,
-            }
-        )
-    return result
+    return [entry_to_dict(r) for r in rows]
 
 
 def summarize(entries):
@@ -456,7 +516,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"ok": True, "time": now_iso(), "db": db.db_stats(conn)})
                 return
 
-            # ---- Kiosk (public) ----
+            # ---- Kiosk (public): 4 punches — IN → LUNCH OUT → LUNCH IN → OUT ----
             if method == "POST" and path == "/api/clock":
                 body = self.read_json_body()
                 employee_number = str(body.get("employeeNumber") or "").strip()
@@ -468,22 +528,109 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_error_json(404, "employee number not recognized")
                     return
                 open_entry = open_entry_for(conn, employee["id"])
+                action = next_punch_action(open_entry)
                 now = now_iso()
-                if open_entry:
-                    conn.execute(
-                        "UPDATE time_entries SET clock_out_utc = ?, updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
-                        (now, open_entry["id"]),
+                labels = {
+                    "in": "IN",
+                    "lunch_out": "LUNCH OUT",
+                    "lunch_in": "LUNCH IN",
+                    "out": "OUT",
+                }
+
+                if action == "in":
+                    cur = conn.execute(
+                        "INSERT INTO time_entries (employee_id, clock_in_utc) VALUES (?, ?);",
+                        (employee["id"], now),
                     )
                     conn.commit()
-                    hours = hours_between(open_entry["clock_in_utc"], now)
                     self.send_json(
                         200,
-                        {"action": "out", "employeeName": employee["name"], "clockIn": open_entry["clock_in_utc"], "clockOut": now, "hours": hours},
+                        {
+                            "action": "in",
+                            "label": labels["in"],
+                            "employeeName": employee["name"],
+                            "clockIn": now,
+                            "nextAction": "lunch_out",
+                            "hours": None,
+                        },
                     )
                     return
-                conn.execute("INSERT INTO time_entries (employee_id, clock_in_utc) VALUES (?, ?);", (employee["id"], now))
+
+                entry_id = open_entry["id"]
+                if action == "lunch_out":
+                    conn.execute(
+                        "UPDATE time_entries SET lunch_out_utc = ?, "
+                        "updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
+                        (now, entry_id),
+                    )
+                    conn.commit()
+                    hours = worked_hours(open_entry["clock_in_utc"], now, None, None)
+                    self.send_json(
+                        200,
+                        {
+                            "action": "lunch_out",
+                            "label": labels["lunch_out"],
+                            "employeeName": employee["name"],
+                            "clockIn": open_entry["clock_in_utc"],
+                            "lunchOut": now,
+                            "nextAction": "lunch_in",
+                            "hours": hours,
+                        },
+                    )
+                    return
+
+                if action == "lunch_in":
+                    conn.execute(
+                        "UPDATE time_entries SET lunch_in_utc = ?, "
+                        "updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
+                        (now, entry_id),
+                    )
+                    conn.commit()
+                    hours = worked_hours(
+                        open_entry["clock_in_utc"], open_entry["lunch_out_utc"], now, None
+                    )
+                    self.send_json(
+                        200,
+                        {
+                            "action": "lunch_in",
+                            "label": labels["lunch_in"],
+                            "employeeName": employee["name"],
+                            "clockIn": open_entry["clock_in_utc"],
+                            "lunchOut": open_entry["lunch_out_utc"],
+                            "lunchIn": now,
+                            "nextAction": "out",
+                            "hours": hours,
+                        },
+                    )
+                    return
+
+                # action == "out"
+                conn.execute(
+                    "UPDATE time_entries SET clock_out_utc = ?, "
+                    "updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
+                    (now, entry_id),
+                )
                 conn.commit()
-                self.send_json(200, {"action": "in", "employeeName": employee["name"], "clockIn": now})
+                hours = worked_hours(
+                    open_entry["clock_in_utc"],
+                    open_entry["lunch_out_utc"],
+                    open_entry["lunch_in_utc"],
+                    now,
+                )
+                self.send_json(
+                    200,
+                    {
+                        "action": "out",
+                        "label": labels["out"],
+                        "employeeName": employee["name"],
+                        "clockIn": open_entry["clock_in_utc"],
+                        "lunchOut": open_entry["lunch_out_utc"],
+                        "lunchIn": open_entry["lunch_in_utc"],
+                        "clockOut": now,
+                        "nextAction": "in",
+                        "hours": hours,
+                    },
+                )
                 return
 
             # ---- Admin: employees ----
@@ -560,6 +707,8 @@ class Handler(BaseHTTPRequestHandler):
                 entry_id = int(entry_match.group(1))
                 body = self.read_json_body()
                 clock_in = to_iso(body.get("clockIn"))
+                lunch_out = to_iso(body.get("lunchOut"))
+                lunch_in = to_iso(body.get("lunchIn"))
                 clock_out = to_iso(body.get("clockOut"))
                 note = clean_text(body.get("note"))
                 if not clock_in:
@@ -567,11 +716,13 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 conn.execute(
                     """
-                    UPDATE time_entries SET clock_in_utc = ?, clock_out_utc = ?, note = ?, edited = 1,
-                           updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                    UPDATE time_entries SET
+                        clock_in_utc = ?, lunch_out_utc = ?, lunch_in_utc = ?, clock_out_utc = ?,
+                        note = ?, edited = 1,
+                        updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                     WHERE id = ?;
                     """,
-                    (clock_in, clock_out, note, entry_id),
+                    (clock_in, lunch_out, lunch_in, clock_out, note, entry_id),
                 )
                 conn.commit()
                 self.send_json(200, {"ok": True})
@@ -585,7 +736,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if method == "GET" and path == "/api/admin/export.csv":
                 entries = list_entries(conn, employee_id=qp("employeeId"), date_from=qp("from"), date_to=qp("to"))
-                lines = ["Employee,Clock In,Clock Out,Hours,Edited,Note"]
+                lines = ["Employee,In,Lunch Out,Lunch In,Out,Hours,Edited,Note"]
                 for e in entries:
                     lines.append(
                         ",".join(
@@ -593,6 +744,8 @@ class Handler(BaseHTTPRequestHandler):
                             for v in (
                                 e["employeeName"],
                                 e["clockIn"],
+                                e["lunchOut"] or "",
+                                e["lunchIn"] or "",
                                 e["clockOut"] or "",
                                 e["hours"] if e["hours"] is not None else "",
                                 "yes" if e["edited"] else "",
