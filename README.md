@@ -95,7 +95,7 @@ In **Admin → Reports**:
 | Report | What it shows | Export |
 |--------|----------------|--------|
 | **Daily attendance** | One business day: Employee, In, Lunch out, Lunch in, Out, Hours, Status | CSV |
-| **Biweekly summary** | 14-day pay window ending on selected date: days worked + total hours per employee | Summary CSV + detail CSV |
+| **Biweekly summary** | Same columns as daily (In / Lunch out / Lunch in / Out) for 14 days, plus per-employee totals | CSV (punches) or CSV + totals |
 
 Timezone for “business day” grouping: `CLOCK_TZ` (default `America/Los_Angeles`).
 
