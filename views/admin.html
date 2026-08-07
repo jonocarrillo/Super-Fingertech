@@ -16,23 +16,23 @@
 </header>
 
 <main>
-  <div class="card">
+  <section class="card card-employees">
     <h2>Employees</h2>
-    <p class="muted hint">Add by <strong>name only</strong>. A kiosk punch code is assigned automatically (shown with the name).</p>
+    <p class="hint">Add by <strong>name only</strong>. Punch code is assigned automatically.</p>
     <div id="employeeTableWrap">
       <table class="data">
         <thead><tr><th>Employee</th><th>Status</th><th>Added</th><th></th></tr></thead>
         <tbody id="employeeBody"></tbody>
       </table>
     </div>
-    <div class="grid" style="margin-top:16px;">
-      <div class="field full"><label>Name</label><input id="newName" placeholder="Full name"></div>
-      <div class="field"><label>&nbsp;</label><button class="btn green" id="addEmployeeBtn">Add employee</button></div>
+    <div class="grid">
+      <div class="field"><label>Name</label><input id="newName" placeholder="Full name"></div>
+      <div class="field"><label>&nbsp;</label><button class="btn green" id="addEmployeeBtn">Add</button></div>
     </div>
-  </div>
+  </section>
 
-  <div class="card">
-    <h2>Reports <span class="muted" style="font-weight:500;font-size:13px;">(TCMS-style)</span></h2>
+  <section class="card card-reports">
+    <h2>Reports <span class="muted">(daily / biweekly)</span></h2>
     <div class="filters">
       <div class="field"><label>Report</label>
         <select id="reportType">
@@ -46,22 +46,22 @@
       <div class="field"><label>Employee</label>
         <select id="reportEmployee"><option value="">All</option></select>
       </div>
-      <button class="btn" id="reportRunBtn">Run report</button>
+      <button class="btn" id="reportRunBtn">Run</button>
       <button class="btn secondary" id="reportExportBtn">Export CSV</button>
-      <button class="btn secondary" id="reportExportDetailBtn" style="display:none;">Export detail CSV</button>
+      <button class="btn secondary" id="reportExportDetailBtn" style="display:none;">CSV + totals</button>
     </div>
-    <p class="muted hint" id="reportMeta" style="margin-top:12px;"></p>
-    <div id="reportSummary" style="margin-top:10px;"></div>
-    <div style="overflow-x:auto;margin-top:12px;">
+    <p class="muted hint" id="reportMeta"></p>
+    <div id="reportSummary"></div>
+    <div id="reportTableWrap">
       <table class="data" id="reportTable">
         <thead id="reportHead"></thead>
         <tbody id="reportBody"></tbody>
       </table>
     </div>
-  </div>
+  </section>
 
-  <div class="card">
-    <h2>Time entries <span class="muted" style="font-weight:500;font-size:13px;">(edit punches)</span></h2>
+  <section class="card card-entries">
+    <h2>Time entries <span class="muted">(edit punches)</span></h2>
     <div class="filters">
       <div class="field"><label>Employee</label>
         <select id="filterEmployee"><option value="">All</option></select>
@@ -71,23 +71,23 @@
       <button class="btn" id="filterBtn">Filter</button>
       <button class="btn secondary" id="exportBtn">Export CSV</button>
     </div>
-    <div style="height:14px"></div>
     <div id="summaryWrap"></div>
-    <div style="height:14px"></div>
-    <table class="data">
-      <thead><tr>
-        <th>Employee</th>
-        <th>In</th>
-        <th>Lunch out</th>
-        <th>Lunch in</th>
-        <th>Out</th>
-        <th>Hours</th>
-        <th>Note</th>
-        <th></th>
-      </tr></thead>
-      <tbody id="entriesBody"></tbody>
-    </table>
-  </div>
+    <div id="entriesTableWrap">
+      <table class="data">
+        <thead><tr>
+          <th>Employee</th>
+          <th>In</th>
+          <th>Lunch out</th>
+          <th>Lunch in</th>
+          <th>Out</th>
+          <th>Hours</th>
+          <th>Note</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="entriesBody"></tbody>
+      </table>
+    </div>
+  </section>
 </main>
 
 <div class="toast" id="toast"></div>
