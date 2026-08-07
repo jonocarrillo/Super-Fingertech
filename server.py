@@ -49,6 +49,33 @@ SESSION_TTL_MS = max(3600_000, int(float(os.environ.get("CLOCK_SESSION_HOURS", "
 SESSION_COOKIE = "clock_session"
 SESSION_SECRET = hashlib.sha256(f"clock-session|{AUTH_USER}|{AUTH_PASSWORD}|v1".encode()).digest()
 
+# Friendly hostnames (map these in /etc/hosts or DNS to the server IP).
+#   clock        → kiosk home page
+#   admin        → admin dashboard home page
+# Also matches clock.local / admin.local (mDNS-style) and short first labels
+# of longer names (e.g. clock.tailnet.ts.net if you add those later).
+CLOCK_HOSTS = frozenset({"clock", "kiosk", "clock.local", "kiosk.local"})
+ADMIN_HOSTS = frozenset({"admin", "clock-admin", "admin.local", "clock-admin.local"})
+
+
+def host_label(host_header: str) -> str:
+    """Return lowercase hostname without port."""
+    return (host_header or "").split(":")[0].strip().lower()
+
+
+def is_admin_host(host: str) -> bool:
+    if host in ADMIN_HOSTS:
+        return True
+    first = host.split(".")[0]
+    return first in ("admin", "clock-admin")
+
+
+def is_clock_host(host: str) -> bool:
+    if host in CLOCK_HOSTS:
+        return True
+    first = host.split(".")[0]
+    return first in ("clock", "kiosk")
+
 MIME = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -302,6 +329,9 @@ class Handler(BaseHTTPRequestHandler):
     def clear_session_cookie_header(self) -> str:
         return f"{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
 
+    def request_host(self) -> str:
+        return host_label(self.headers.get("Host", ""))
+
     def is_public_path(self, path, method):
         if path == "/api/login" and method == "POST":
             return True
@@ -312,6 +342,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/clock" and method == "POST":
             return True
         if method == "GET":
+            # Admin-named hosts treat "/" as the dashboard (requires login).
+            if path == "/" and is_admin_host(self.request_host()):
+                return False
             if path in ("/", "/clock.html", "/login", "/login.html", "/style.css"):
                 return True
             if path.startswith("/public/"):
@@ -577,7 +610,12 @@ class Handler(BaseHTTPRequestHandler):
 
         # ---- Static views/assets (outside the db lock) ----
         if method == "GET":
-            if path in ("/", "/clock.html"):
+            host = self.request_host()
+            # Friendly hostnames: http://clock/  vs  http://admin/
+            if path == "/" and is_admin_host(host):
+                self.serve_file(VIEWS_DIR / "admin.html")
+                return
+            if path in ("/", "/clock.html") or (path == "/" and is_clock_host(host)):
                 self.serve_file(VIEWS_DIR / "clock.html")
                 return
             if path in ("/admin.html", "/admin"):
@@ -604,6 +642,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Employee clock-in terminal listening on http://{HOST}:{PORT}")
+    print(f"Friendly names (set in /etc/hosts or DNS):")
+    print(f"  http://clock:{PORT}/       → kiosk")
+    print(f"  http://admin:{PORT}/       → admin dashboard")
     print(f"Database: {db.resolve_database_path()}")
     print(f"Admin login: {'user=' + AUTH_USER if AUTH_ENABLED else 'DISABLED (open access)'}")
     try:

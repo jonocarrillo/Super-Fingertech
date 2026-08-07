@@ -23,6 +23,23 @@ Then open:
 | Clock kiosk | http://127.0.0.1:5050 |
 | Admin | http://127.0.0.1:5050/admin.html |
 
+### Friendly names (no IP typing)
+
+On each PC that should use short names, add to `/etc/hosts` (Tailscale IP of banana):
+
+```text
+100.112.2.13   clock admin
+```
+
+Then open:
+
+| Screen | URL |
+|--------|-----|
+| Clock kiosk | http://clock:5050/ |
+| Admin | http://admin:5050/ |
+
+(If port 80 is redirected to 5050 on the server, you can use `http://clock/` and `http://admin/` with no port.)
+
 Default admin credentials (change these):
 
 - User: `admin`
