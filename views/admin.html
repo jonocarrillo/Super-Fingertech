@@ -18,15 +18,15 @@
 <main>
   <div class="card">
     <h2>Employees</h2>
+    <p class="muted hint">Add by <strong>name only</strong>. A kiosk punch code is assigned automatically (shown with the name).</p>
     <div id="employeeTableWrap">
       <table class="data">
-        <thead><tr><th>Name</th><th>Employee #</th><th>Status</th><th>Added</th><th></th></tr></thead>
+        <thead><tr><th>Employee</th><th>Status</th><th>Added</th><th></th></tr></thead>
         <tbody id="employeeBody"></tbody>
       </table>
     </div>
     <div class="grid" style="margin-top:16px;">
-      <div class="field"><label>Name</label><input id="newName" placeholder="Full name"></div>
-      <div class="field"><label>Employee # (1-8 digits)</label><input id="newNumber" inputmode="numeric" maxlength="8" placeholder="1001"></div>
+      <div class="field full"><label>Name</label><input id="newName" placeholder="Full name"></div>
       <div class="field"><label>&nbsp;</label><button class="btn green" id="addEmployeeBtn">Add employee</button></div>
     </div>
   </div>
@@ -139,19 +139,24 @@
     renderEmployeeFilter();
   }
 
+  function employeeLabel(e) {
+    const num = e.employeeNumber != null ? e.employeeNumber : e;
+    const name = e.name != null ? e.name : '';
+    if (name && num) return esc(name) + ' <span class="muted">#' + esc(num) + '</span>';
+    return esc(name || num || '');
+  }
+
   function renderEmployeeTable() {
     $('employeeBody').innerHTML = employees.map(e => {
       const badge = e.active ? '<span class="badge in">Active</span>' : '<span class="badge out">Inactive</span>';
       return '<tr>' +
-        '<td>' + esc(e.name) + '</td>' +
-        '<td>' + esc(e.employeeNumber) + '</td>' +
+        '<td>' + employeeLabel(e) + '</td>' +
         '<td>' + badge + '</td>' +
         '<td class="muted">' + esc(fmtDT(e.createdAt)) + '</td>' +
         '<td class="row-actions">' +
-          '<button class="btn small secondary" data-act="number" data-id="' + e.id + '">Change #</button>' +
           '<button class="btn small ' + (e.active ? 'danger' : 'green') + '" data-act="toggle" data-id="' + e.id + '">' + (e.active ? 'Deactivate' : 'Reactivate') + '</button>' +
         '</td></tr>';
-    }).join('') || '<tr><td colspan="5" class="muted">No employees yet.</td></tr>';
+    }).join('') || '<tr><td colspan="4" class="muted">No employees yet.</td></tr>';
 
     $('employeeBody').querySelectorAll('button[data-act="toggle"]').forEach(btn => {
       btn.onclick = async () => {
@@ -163,24 +168,11 @@
         loadEmployees();
       };
     });
-    $('employeeBody').querySelectorAll('button[data-act="number"]').forEach(btn => {
-      btn.onclick = async () => {
-        const employeeNumber = prompt('New employee number (1-8 digits):');
-        if (!employeeNumber) return;
-        if (!/^\d{1,8}$/.test(employeeNumber)) { toast('Employee number must be 1-8 digits', true); return; }
-        const res = await api('/api/admin/employees/' + btn.dataset.id, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ employeeNumber })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok) { toast('Employee number updated'); loadEmployees(); } else { toast(data.error || 'Failed to update', true); }
-      };
-    });
   }
 
   function renderEmployeeFilter() {
     const opts = '<option value="">All</option>' +
-      employees.map(e => '<option value="' + e.id + '">' + esc(e.name) + ' (' + esc(e.employeeNumber) + ')</option>').join('');
+      employees.map(e => '<option value="' + e.id + '">' + esc(e.name) + '</option>').join('');
     ['filterEmployee', 'reportEmployee'].forEach(id => {
       const sel = $(id);
       if (!sel) return;
@@ -237,12 +229,11 @@
         ' · ' + data.rowCount + ' row(s) · ' + data.totalHours + ' total hrs' +
         (data.incompleteCount ? ' · ' + data.incompleteCount + ' incomplete' : '');
       sum.innerHTML = '';
-      head.innerHTML = '<tr><th>Date</th><th>Emp #</th><th>Employee</th><th>In</th><th>Lunch out</th><th>Lunch in</th><th>Out</th><th>Hours</th><th>Status</th></tr>';
+      head.innerHTML = '<tr><th>Date</th><th>Employee</th><th>In</th><th>Lunch out</th><th>Lunch in</th><th>Out</th><th>Hours</th><th>Status</th></tr>';
       body.innerHTML = (data.rows || []).map(r =>
         '<tr>' +
           '<td>' + esc(r.date) + '</td>' +
-          '<td>' + esc(r.employeeNumber) + '</td>' +
-          '<td>' + esc(r.employeeName) + '</td>' +
+          '<td>' + esc(r.employeeName) + (r.employeeNumber ? ' <span class="muted">#' + esc(r.employeeNumber) + '</span>' : '') + '</td>' +
           '<td>' + esc(r.clockInLocal) + '</td>' +
           '<td>' + esc(r.lunchOutLocal) + '</td>' +
           '<td>' + esc(r.lunchInLocal) + '</td>' +
@@ -250,7 +241,7 @@
           '<td>' + (r.hours != null ? r.hours : '—') + '</td>' +
           '<td>' + esc(r.status) + '</td>' +
         '</tr>'
-      ).join('') || '<tr><td colspan="9" class="muted">No punches this day.</td></tr>';
+      ).join('') || '<tr><td colspan="8" class="muted">No punches this day.</td></tr>';
       return;
     }
 
@@ -259,17 +250,16 @@
         ' · ' + (data.timezone || '') + ' · ' + data.employeeCount + ' employee(s) · ' +
         data.totalHours + ' total hrs';
       sum.innerHTML = '<p class="muted">Summary per employee for the 14-day pay window ending on the selected date. Use “Export detail CSV” for day-by-day punches (like TCMS daily audit).</p>';
-      head.innerHTML = '<tr><th>Emp #</th><th>Employee</th><th>Days worked</th><th>Complete</th><th>Incomplete</th><th>Total hours</th></tr>';
+      head.innerHTML = '<tr><th>Employee</th><th>Days worked</th><th>Complete</th><th>Incomplete</th><th>Total hours</th></tr>';
       body.innerHTML = (data.rows || []).map(r =>
         '<tr>' +
-          '<td>' + esc(r.employeeNumber) + '</td>' +
-          '<td>' + esc(r.employeeName) + '</td>' +
+          '<td>' + esc(r.employeeName) + (r.employeeNumber ? ' <span class="muted">#' + esc(r.employeeNumber) + '</span>' : '') + '</td>' +
           '<td>' + r.daysWorked + '</td>' +
           '<td>' + r.completeDays + '</td>' +
           '<td>' + r.incompleteDays + '</td>' +
           '<td><strong>' + r.hours + '</strong></td>' +
         '</tr>'
-      ).join('') || '<tr><td colspan="6" class="muted">No punches in this pay period.</td></tr>';
+      ).join('') || '<tr><td colspan="5" class="muted">No punches in this pay period.</td></tr>';
     }
   }
 
@@ -299,18 +289,16 @@
 
   $('addEmployeeBtn').onclick = async () => {
     const name = $('newName').value.trim();
-    const employeeNumber = $('newNumber').value.trim();
     if (!name) { toast('Name required', true); return; }
-    if (!/^\d{1,8}$/.test(employeeNumber)) { toast('Employee number must be 1-8 digits', true); return; }
     const res = await api('/api/admin/employees', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, employeeNumber })
+      body: JSON.stringify({ name })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { toast(data.error || 'Failed to add employee', true); return; }
     $('newName').value = '';
-    $('newNumber').value = '';
-    toast('Employee added');
+    const code = data.employeeNumber ? ' — punch code #' + data.employeeNumber : '';
+    toast('Added ' + (data.name || name) + code);
     loadEmployees();
   };
 

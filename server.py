@@ -239,6 +239,21 @@ def find_employee_by_number(conn, employee_number):
     return conn.execute("SELECT * FROM employees WHERE employee_number = ?;", (employee_number,)).fetchone()
 
 
+def next_employee_number(conn) -> str:
+    """Auto-assign the next free punch code (not managed as a separate admin field)."""
+    row = conn.execute(
+        "SELECT employee_number FROM employees WHERE employee_number GLOB '[0-9]*' "
+        "ORDER BY CAST(employee_number AS INTEGER) DESC LIMIT 1;"
+    ).fetchone()
+    n = int(row["employee_number"]) + 1 if row else 1
+    # skip collisions if any non-numeric gaps
+    while find_employee_by_number(conn, str(n)):
+        n += 1
+    if n > 99_999_999:
+        raise ValueError("no free employee numbers left")
+    return str(n)
+
+
 def open_entry_for(conn, employee_id):
     return conn.execute(
         "SELECT * FROM time_entries WHERE employee_id = ? AND clock_out_utc IS NULL "
@@ -541,16 +556,18 @@ def daily_report_csv(report: dict) -> str:
         f"# Date,{report['date']}",
         f"# Timezone,{report['timezone']}",
         f"# Total hours,{report['totalHours']}",
-        "Date,Emp #,Employee,In,Lunch Out,Lunch In,Out,Hours,Status,Note",
+        "Date,Employee,In,Lunch Out,Lunch In,Out,Hours,Status,Note",
     ]
     for r in report["rows"]:
+        emp_label = r["employeeName"]
+        if r.get("employeeNumber"):
+            emp_label = f"{r['employeeName']} (#{r['employeeNumber']})"
         lines.append(
             ",".join(
                 csv_escape(v)
                 for v in (
                     r["date"],
-                    r["employeeNumber"],
-                    r["employeeName"],
+                    emp_label,
                     r["clockInLocal"],
                     r["lunchOutLocal"],
                     r["lunchInLocal"],
@@ -572,15 +589,17 @@ def biweekly_report_csv(report: dict, detail: bool = False) -> str:
         f"# Total hours,{report['totalHours']}",
     ]
     if detail:
-        lines.append("Date,Emp #,Employee,In,Lunch Out,Lunch In,Out,Hours,Status")
+        lines.append("Date,Employee,In,Lunch Out,Lunch In,Out,Hours,Status")
         for r in report["detailEntries"]:
+            emp_label = r["employeeName"]
+            if r.get("employeeNumber"):
+                emp_label = f"{r['employeeName']} (#{r['employeeNumber']})"
             lines.append(
                 ",".join(
                     csv_escape(v)
                     for v in (
                         r["date"],
-                        r["employeeNumber"],
-                        r["employeeName"],
+                        emp_label,
                         r["clockInLocal"],
                         r["lunchOutLocal"],
                         r["lunchInLocal"],
@@ -591,14 +610,16 @@ def biweekly_report_csv(report: dict, detail: bool = False) -> str:
                 )
             )
     else:
-        lines.append("Emp #,Employee,Days Worked,Complete Days,Incomplete Days,Total Hours")
+        lines.append("Employee,Days Worked,Complete Days,Incomplete Days,Total Hours")
         for r in report["rows"]:
+            emp_label = r["employeeName"]
+            if r.get("employeeNumber"):
+                emp_label = f"{r['employeeName']} (#{r['employeeNumber']})"
             lines.append(
                 ",".join(
                     csv_escape(v)
                     for v in (
-                        r["employeeNumber"],
-                        r["employeeName"],
+                        emp_label,
                         r["daysWorked"],
                         r["completeDays"],
                         r["incompleteDays"],
@@ -941,13 +962,22 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST" and path == "/api/admin/employees":
                 body = self.read_json_body()
                 name = clean_text(body.get("name"))
-                employee_number = str(body.get("employeeNumber") or "").strip()
                 if not name:
                     self.send_error_json(400, "name is required")
                     return
-                if not EMPLOYEE_NUMBER_RE.fullmatch(employee_number):
-                    self.send_error_json(400, "employee number must be 1-8 digits")
-                    return
+                # Punch code is auto-assigned; optional override only if client sends one.
+                raw_num = str(body.get("employeeNumber") or "").strip()
+                if raw_num:
+                    if not EMPLOYEE_NUMBER_RE.fullmatch(raw_num):
+                        self.send_error_json(400, "employee number must be 1-8 digits")
+                        return
+                    employee_number = raw_num
+                else:
+                    try:
+                        employee_number = next_employee_number(conn)
+                    except ValueError as err:
+                        self.send_error_json(400, str(err))
+                        return
                 try:
                     cur = conn.execute(
                         "INSERT INTO employees (name, employee_number) VALUES (?, ?);", (name, employee_number)
@@ -956,7 +986,7 @@ class Handler(BaseHTTPRequestHandler):
                 except sqlite3.IntegrityError:
                     self.send_error_json(400, "that employee number is already in use")
                     return
-                self.send_json(200, {"id": cur.lastrowid})
+                self.send_json(200, {"id": cur.lastrowid, "employeeNumber": employee_number, "name": name})
                 return
 
             employee_match = re.fullmatch(r"/api/admin/employees/(\d+)", path)
@@ -969,8 +999,9 @@ class Handler(BaseHTTPRequestHandler):
                 body = self.read_json_body()
                 name = clean_text(body.get("name")) or employee["name"]
                 active = employee["active"] if body.get("active") is None else (1 if body.get("active") else 0)
+                # Keep existing punch code unless explicitly changed (not shown as a separate admin field).
                 employee_number = employee["employee_number"]
-                if body.get("employeeNumber") is not None:
+                if body.get("employeeNumber") is not None and str(body.get("employeeNumber")).strip() != "":
                     employee_number = str(body.get("employeeNumber")).strip()
                     if not EMPLOYEE_NUMBER_RE.fullmatch(employee_number):
                         self.send_error_json(400, "employee number must be 1-8 digits")
@@ -985,9 +1016,8 @@ class Handler(BaseHTTPRequestHandler):
                 except sqlite3.IntegrityError:
                     self.send_error_json(400, "that employee number is already in use")
                     return
-                self.send_json(200, {"ok": True})
-                return
-            if employee_match and method == "DELETE":
+                self.send_json(200, {"ok": True, "employeeNumber": employee_number})
+                return            if employee_match and method == "DELETE":
                 employee_id = int(employee_match.group(1))
                 conn.execute(
                     "UPDATE employees SET active = 0, updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
