@@ -329,6 +329,60 @@
   function playSuccessTone() { beep(660, 0.09); setTimeout(() => beep(990, 0.12), 90); }
   function playErrorTone() { beep(220, 0.22, 'sawtooth'); }
 
+  // ---- Text-to-speech (names + punch type) ----
+  let voicesReady = false;
+  function warmVoices() {
+    if (!window.speechSynthesis) return;
+    const list = speechSynthesis.getVoices();
+    if (list && list.length) voicesReady = true;
+  }
+  if (window.speechSynthesis) {
+    warmVoices();
+    speechSynthesis.onvoiceschanged = warmVoices;
+  }
+
+  function pickVoice() {
+    if (!window.speechSynthesis) return null;
+    const voices = speechSynthesis.getVoices() || [];
+    // Prefer English voices; en-US first for names like "Jesus"
+    return (
+      voices.find(v => /en-US/i.test(v.lang) && /google|natural|premium|enhanced/i.test(v.name)) ||
+      voices.find(v => /en-US/i.test(v.lang)) ||
+      voices.find(v => /^en/i.test(v.lang)) ||
+      voices[0] ||
+      null
+    );
+  }
+
+  /** Speak a short confirmation, e.g. "Jesus Polanco, clocked in" */
+  function speak(text) {
+    if (!window.speechSynthesis || !text) return;
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(String(text));
+      const voice = pickVoice();
+      if (voice) u.voice = voice;
+      u.lang = (voice && voice.lang) || 'en-US';
+      u.rate = 0.95;
+      u.pitch = 1;
+      u.volume = 1;
+      speechSynthesis.speak(u);
+    } catch (e) { /* ignore TTS failures */ }
+  }
+
+  function speakPunch(data) {
+    const name = (data.employeeName || 'Employee').trim();
+    const phrases = {
+      in: name + ', clocked in',
+      lunch_out: name + ', lunch out',
+      lunch_in: name + ', lunch in',
+      out: name + ', clocked out'
+    };
+    const line = phrases[data.action] || (name + ', ' + (data.label || 'punched'));
+    // Small delay so success beep and speech don't fully clash
+    setTimeout(function () { speak(line); }, 180);
+  }
+
   function toast(msg, err) {
     const t = $('toast');
     t.textContent = msg;
