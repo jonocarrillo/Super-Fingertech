@@ -4,103 +4,291 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Clock In / Out</title>
+<title>Time Clock</title>
 <style>
+  /* Black tablet kiosk theme — high contrast, large touch targets */
   :root {
-    --bg: #f0fdf4; --panel: #ffffff; --panel-2: #ecfdf5; --border: #bbf7d0;
-    --text: #14532d; --muted: #4d7c0f; --green: #16a34a; --green-dark: #15803d;
-    --danger: #dc2626; --header: #166534;
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface-2: #1c1c1c;
+    --key: #222222;
+    --key-active: #2e2e2e;
+    --border: #2a2a2a;
+    --text: #f5f5f5;
+    --muted: #9ca3af;
+    --green: #22c55e;
+    --green-dark: #16a34a;
+    --danger: #f87171;
+    --radius: 16px;
+    --font: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%;
-    background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 50%, #ecfdf5 100%);
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); }
+  body {
+    font-family: var(--font);
     color: var(--text);
-    font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-  body { display: flex; flex-direction: column; min-height: 100%; }
-  header {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 16px 22px;
-    background: linear-gradient(90deg, #166534 0%, #16a34a 100%);
-    border-bottom: 3px solid #15803d;
-    color: #fff;
-    box-shadow: 0 6px 18px rgba(22, 101, 52, 0.15);
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
   }
-  header h1 { margin: 0; font-size: 20px; font-weight: 700; color: #fff; }
-  header .clock { font-size: 15px; color: rgba(255,255,255,.9); font-variant-numeric: tabular-nums; }
-  header a { color: #fff; font-size: 12px; text-decoration: none; opacity: .9; }
-  header a:hover { opacity: 1; text-decoration: underline; }
-  main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
 
-  .pad-card {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
-    padding: 28px; width: 100%; max-width: 340px; text-align: center;
-    box-shadow: 0 10px 30px rgba(22, 101, 52, 0.1);
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px;
+    background: #000;
+    border-bottom: 1px solid var(--border);
+    color: #fff;
   }
-  .pad-card h2 { margin: 0 0 4px; font-size: 17px; color: var(--green-dark); }
-  .pad-card .sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
-  .number-display {
-    background: var(--panel-2); border: 2px solid var(--border); border-radius: 12px;
-    padding: 16px; margin-bottom: 16px; font-size: 30px; font-weight: 700;
-    letter-spacing: 6px; min-height: 44px; font-variant-numeric: tabular-nums;
-    color: var(--green-dark);
+  .top h1 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
   }
-  .number-display.placeholder { color: var(--muted); font-weight: 400; font-size: 16px; letter-spacing: normal; }
-  .error-msg { color: var(--danger); font-size: 13px; min-height: 18px; margin-bottom: 8px; }
-  .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .top-meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .top .clock {
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .top a {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+  }
+
+  main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px 32px;
+  }
+
+  .pad {
+    width: min(420px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px 22px 22px;
+  }
+
+  .pad h2 {
+    margin: 0 0 6px;
+    font-size: 1.25rem;
+    font-weight: 700;
+    text-align: center;
+    color: #fff;
+    letter-spacing: -0.02em;
+  }
+  .pad .lead {
+    margin: 0 0 16px;
+    text-align: center;
+    font-size: 0.82rem;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-bottom: 18px;
+  }
+  .steps span {
+    text-align: center;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #d1d5db;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 7px 2px;
+    line-height: 1.15;
+  }
+
+  .display {
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    min-height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+    font-size: 2.35rem;
+    font-weight: 750;
+    letter-spacing: 0.28em;
+    font-variant-numeric: tabular-nums;
+    color: #fff;
+    padding: 14px 8px 14px 0.28em;
+  }
+  .display.placeholder {
+    color: #4b5563;
+    font-size: 1.1rem;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    padding: 14px;
+  }
+
+  .error-msg {
+    min-height: 18px;
+    margin: 0 0 10px;
+    text-align: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--danger);
+  }
+
+  .keypad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
   .keypad button {
-    padding: 20px 0; font-size: 22px; font-weight: 700; border-radius: 12px;
-    border: 1px solid var(--border); background: #fff; color: var(--text); cursor: pointer;
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--key);
+    color: #fff;
+    border-radius: 14px;
+    min-height: 64px;
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background .1s, transform .05s;
   }
-  .keypad button:hover { background: var(--panel-2); border-color: #86efac; }
-  .keypad button:active { transform: scale(.95); background: #dcfce7; }
-  .keypad button.clear { background: transparent; border-color: transparent; color: var(--danger); font-size: 14px; }
-  .keypad button.back { background: transparent; border-color: transparent; color: var(--muted); font-size: 14px; }
-  .submit-btn {
-    width: 100%; padding: 16px; font-size: 17px; font-weight: 700; border-radius: 12px;
-    border: none; background: var(--green); color: #fff; cursor: pointer;
+  .keypad button:active {
+    background: var(--key-active);
+    transform: scale(0.97);
   }
-  .submit-btn:hover { background: var(--green-dark); }
-  .submit-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .keypad button.util {
+    font-size: 0.85rem;
+    font-weight: 650;
+    color: var(--muted);
+    background: transparent;
+    border-color: transparent;
+  }
+  .keypad button.util.danger { color: var(--danger); }
+
+  .submit {
+    width: 100%;
+    border: none;
+    border-radius: 14px;
+    min-height: 56px;
+    font-size: 1.1rem;
+    font-weight: 750;
+    font-family: inherit;
+    background: var(--green);
+    color: #052e16;
+    cursor: pointer;
+  }
+  .submit:active { background: var(--green-dark); }
+  .submit:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    background: #374151;
+    color: #9ca3af;
+  }
 
   .toast {
-    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(12px);
-    background: var(--green); color: #fff; padding: 14px 22px; border-radius: 12px;
-    font-weight: 700; font-size: 16px; opacity: 0; transition: .2s; pointer-events: none; z-index: 50;
-    text-align: center; max-width: 90vw;
-    box-shadow: 0 8px 20px rgba(22, 101, 52, 0.25);
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(10px);
+    z-index: 50;
+    max-width: min(440px, calc(100vw - 28px));
+    background: #111;
+    color: #fff;
+    border: 1px solid #333;
+    padding: 14px 18px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 1rem;
+    text-align: center;
+    opacity: 0;
+    transition: .2s;
+    pointer-events: none;
+    box-shadow: 0 12px 32px rgba(0,0,0,.55);
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .toast.err { background: var(--danger); color: #fff; }
+  .toast.err { background: #450a0a; border-color: #7f1d1d; color: #fecaca; }
+
+  /* Tablet / landscape: slightly larger pad */
+  @media (min-width: 700px) {
+    .pad { width: min(460px, 100%); padding: 28px 26px 24px; }
+    .keypad button { min-height: 72px; font-size: 1.65rem; }
+    .display { min-height: 80px; font-size: 2.6rem; }
+    .submit { min-height: 60px; font-size: 1.15rem; }
+  }
+  @media (max-width: 380px) {
+    .keypad button { min-height: 54px; font-size: 1.25rem; }
+    .steps span { font-size: 0.55rem; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>🕒 Time Clock</h1>
-  <div style="display:flex; align-items:center; gap:16px;">
-    <div class="clock" id="clockTime"></div>
-    <a href="/admin.html">Admin</a>
-  </div>
-</header>
-
-<main>
-  <div class="pad-card">
-    <h2>Enter your punch code</h2>
-    <p class="sub">Code is on your name in Admin. Day: <strong>In</strong> → <strong>Lunch out</strong> → <strong>Lunch in</strong> → <strong>Out</strong></p>
-    <div class="number-display placeholder" id="numberDisplay">— — — —</div>
-    <div class="error-msg" id="padError"></div>
-    <div class="keypad" id="keypad">
-      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
-      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
-      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
-      <button class="clear" data-k="clear">Clear</button>
-      <button data-k="0">0</button>
-      <button class="back" data-k="back">⌫</button>
+  <header class="top">
+    <h1>Time Clock</h1>
+    <div class="top-meta">
+      <div class="clock" id="clockTime"></div>
+      <a href="/admin.html">Admin</a>
     </div>
-    <button class="submit-btn" id="submitBtn" disabled>Punch</button>
-  </div>
-</main>
+  </header>
 
-<div class="toast" id="toast"></div>
+  <main>
+    <div class="pad">
+      <h2>Enter punch code</h2>
+      <p class="lead">Your code is shown next to your name in Admin.</p>
+
+      <div class="steps" aria-hidden="true">
+        <span>1 In</span>
+        <span>2 Lunch out</span>
+        <span>3 Lunch in</span>
+        <span>4 Out</span>
+      </div>
+
+      <div class="display placeholder" id="numberDisplay">••••</div>
+      <div class="error-msg" id="padError"></div>
+
+      <div class="keypad" id="keypad">
+        <button type="button" data-k="1">1</button>
+        <button type="button" data-k="2">2</button>
+        <button type="button" data-k="3">3</button>
+        <button type="button" data-k="4">4</button>
+        <button type="button" data-k="5">5</button>
+        <button type="button" data-k="6">6</button>
+        <button type="button" data-k="7">7</button>
+        <button type="button" data-k="8">8</button>
+        <button type="button" data-k="9">9</button>
+        <button type="button" class="util danger" data-k="clear">Clear</button>
+        <button type="button" data-k="0">0</button>
+        <button type="button" class="util" data-k="back">⌫</button>
+      </div>
+
+      <button type="button" class="submit" id="submitBtn" disabled>Punch</button>
+    </div>
+  </main>
+
+  <div class="toast" id="toast"></div>
 
 <script>
 (function () {
@@ -114,7 +302,6 @@
   let number = '';
   let submitting = false;
 
-  // ---- Key press sounds (synthesized, no audio files needed) ----
   let audioCtx = null;
   function getAudioCtx() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -130,7 +317,7 @@
     const gain = ctx.createGain();
     osc.type = type || 'sine';
     osc.frequency.value = freq;
-    gain.gain.value = 0.15;
+    gain.gain.value = 0.12;
     osc.connect(gain);
     gain.connect(ctx.destination);
     gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
@@ -163,8 +350,13 @@
   setInterval(tickClock, 1000);
 
   function render() {
-    display.textContent = number || '— — — —';
-    display.classList.toggle('placeholder', !number);
+    if (number) {
+      display.textContent = number;
+      display.classList.remove('placeholder');
+    } else {
+      display.textContent = '••••';
+      display.classList.add('placeholder');
+    }
     submitBtn.disabled = !number || submitting;
   }
 
@@ -187,7 +379,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         playErrorTone();
-        padError.textContent = data.error || 'Could not clock in/out';
+        padError.textContent = data.error || 'Could not punch';
         submitting = false;
         render();
         return;
@@ -226,7 +418,6 @@
   });
 
   submitBtn.addEventListener('click', submit);
-
   render();
 })();
 </script>
