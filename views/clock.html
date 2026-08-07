@@ -7,54 +7,67 @@
 <title>Clock In / Out</title>
 <style>
   :root {
-    --bg: #0f172a; --panel: #1e293b; --panel-2: #273449; --border: #334155;
-    --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --green: #22c55e; --danger: #ef4444;
+    --bg: #f0fdf4; --panel: #ffffff; --panel-2: #ecfdf5; --border: #bbf7d0;
+    --text: #14532d; --muted: #4d7c0f; --green: #16a34a; --green-dark: #15803d;
+    --danger: #dc2626; --header: #166534;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  html, body { margin: 0; height: 100%;
+    background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 50%, #ecfdf5 100%);
+    color: var(--text);
     font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
   body { display: flex; flex-direction: column; min-height: 100%; }
   header {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 16px 22px; background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 16px 22px;
+    background: linear-gradient(90deg, #166534 0%, #16a34a 100%);
+    border-bottom: 3px solid #15803d;
+    color: #fff;
+    box-shadow: 0 6px 18px rgba(22, 101, 52, 0.15);
   }
-  header h1 { margin: 0; font-size: 20px; font-weight: 700; }
-  header .clock { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  header a { color: var(--muted); font-size: 12px; text-decoration: none; }
+  header h1 { margin: 0; font-size: 20px; font-weight: 700; color: #fff; }
+  header .clock { font-size: 15px; color: rgba(255,255,255,.9); font-variant-numeric: tabular-nums; }
+  header a { color: #fff; font-size: 12px; text-decoration: none; opacity: .9; }
+  header a:hover { opacity: 1; text-decoration: underline; }
   main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
 
   .pad-card {
     background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
     padding: 28px; width: 100%; max-width: 340px; text-align: center;
+    box-shadow: 0 10px 30px rgba(22, 101, 52, 0.1);
   }
-  .pad-card h2 { margin: 0 0 4px; font-size: 17px; }
+  .pad-card h2 { margin: 0 0 4px; font-size: 17px; color: var(--green-dark); }
   .pad-card .sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
   .number-display {
-    background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px;
+    background: var(--panel-2); border: 2px solid var(--border); border-radius: 12px;
     padding: 16px; margin-bottom: 16px; font-size: 30px; font-weight: 700;
     letter-spacing: 6px; min-height: 44px; font-variant-numeric: tabular-nums;
+    color: var(--green-dark);
   }
   .number-display.placeholder { color: var(--muted); font-weight: 400; font-size: 16px; letter-spacing: normal; }
   .error-msg { color: var(--danger); font-size: 13px; min-height: 18px; margin-bottom: 8px; }
   .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
   .keypad button {
     padding: 20px 0; font-size: 22px; font-weight: 700; border-radius: 12px;
-    border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer;
+    border: 1px solid var(--border); background: #fff; color: var(--text); cursor: pointer;
   }
-  .keypad button:active { transform: scale(.95); }
+  .keypad button:hover { background: var(--panel-2); border-color: #86efac; }
+  .keypad button:active { transform: scale(.95); background: #dcfce7; }
   .keypad button.clear { background: transparent; border-color: transparent; color: var(--danger); font-size: 14px; }
   .keypad button.back { background: transparent; border-color: transparent; color: var(--muted); font-size: 14px; }
   .submit-btn {
     width: 100%; padding: 16px; font-size: 17px; font-weight: 700; border-radius: 12px;
-    border: none; background: var(--green); color: #052e16; cursor: pointer;
+    border: none; background: var(--green); color: #fff; cursor: pointer;
   }
+  .submit-btn:hover { background: var(--green-dark); }
   .submit-btn:disabled { opacity: .4; cursor: not-allowed; }
 
   .toast {
     position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(12px);
-    background: var(--green); color: #052e16; padding: 14px 22px; border-radius: 12px;
+    background: var(--green); color: #fff; padding: 14px 22px; border-radius: 12px;
     font-weight: 700; font-size: 16px; opacity: 0; transition: .2s; pointer-events: none; z-index: 50;
     text-align: center; max-width: 90vw;
+    box-shadow: 0 8px 20px rgba(22, 101, 52, 0.25);
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .toast.err { background: var(--danger); color: #fff; }
