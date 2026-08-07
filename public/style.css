@@ -1,4 +1,4 @@
-/* Super Fingertech admin — full-screen dashboard layout */
+/* Super Fingertech admin — full width, normal page scroll */
 :root {
   --bg: #f3f6f4;
   --surface: #ffffff;
@@ -20,54 +20,44 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html {
-  -webkit-text-size-adjust: 100%;
-  height: 100%;
-}
+html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  min-height: 100%;
-  height: 100%;
+  min-height: 100vh;
   font-family: var(--font);
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.45;
   color: var(--text);
   background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden; /* page scrolls inside panels */
 }
 
 /* ----- Top bar ----- */
 header.topbar {
-  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
   z-index: 40;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-height: var(--header-h);
-  padding: 0 16px;
+  padding: 0 20px;
   background: var(--green-deep);
   color: #fff;
 }
 
 header.topbar h1 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 650;
   color: #fff;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 header.topbar nav {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
 }
 
 header.topbar nav a {
@@ -82,46 +72,15 @@ header.topbar nav a {
 
 header.topbar nav a:hover { background: rgba(255,255,255,.24); }
 
-/* ----- Full-width workspace ----- */
+/* ----- Full width content, normal document scroll ----- */
 main {
-  flex: 1 1 auto;
-  min-height: 0; /* critical for nested scroll */
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 12px;
-  display: grid;
-  grid-template-columns: minmax(280px, 320px) 1fr;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1.15fr);
-  gap: 12px;
-  overflow: hidden;
-}
-
-/* Employees: left column, full height */
-main > .card.card-employees {
-  grid-column: 1;
-  grid-row: 1 / -1;
-  min-height: 0;
+  padding: 16px 20px 48px;
   display: flex;
   flex-direction: column;
-}
-
-/* Reports: top right */
-main > .card.card-reports {
-  grid-column: 2;
-  grid-row: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Entries: bottom right */
-main > .card.card-entries {
-  grid-column: 2;
-  grid-row: 2;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+  gap: 16px;
 }
 
 /* ----- Cards ----- */
@@ -130,63 +89,69 @@ main > .card.card-entries {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 1px 2px rgba(20, 83, 45, 0.04);
-  overflow: hidden;
-  min-width: 0;
+  padding: 0 0 16px;
+  overflow: visible;
 }
 
 .card > h2 {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 10px 14px;
-  font-size: 0.9rem;
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  font-size: 0.95rem;
   font-weight: 700;
   color: var(--green-deep);
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
 }
 
 .card > h2 .muted {
   font-weight: 500;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--muted);
 }
 
-.card-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
+.card > .hint,
+.card > .filters,
+.card > .grid,
+.card > #employeeTableWrap,
+.card > #reportTableWrap,
+.card > #entriesTableWrap,
+.card > #reportMeta,
+.card > #reportSummary,
+.card > #summaryWrap {
+  margin-left: 16px;
+  margin-right: 16px;
+}
+
+.card > .hint { margin-top: 0; margin-bottom: 10px; }
+.card > .filters { margin-top: 0; margin-bottom: 12px; }
+.card > .grid { margin-top: 12px; margin-bottom: 0; }
+.card > #employeeTableWrap,
+.card > #reportTableWrap,
+.card > #entriesTableWrap {
+  margin-top: 10px;
+  margin-bottom: 0;
+  overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 10px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
 }
 
-.card > .hint {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 8px 14px 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.card > .filters {
-  flex: 0 0 auto;
-  margin: 10px 12px 0;
-}
-
-.card > .grid {
-  flex: 0 0 auto;
-  margin: 10px 12px 12px;
-}
+.card > #reportMeta { margin-top: 8px; margin-bottom: 0; }
+.card > #reportSummary { margin-top: 8px; margin-bottom: 0; }
+.card > #summaryWrap { margin-top: 8px; margin-bottom: 0; }
 
 .muted { color: var(--muted); }
-.hint { font-size: 0.78rem; color: var(--muted); line-height: 1.35; }
+.hint { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
 
-/* ----- Filters toolbar ----- */
+/* ----- Filters ----- */
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 10px;
+  gap: 10px 12px;
   align-items: flex-end;
-  padding: 10px;
+  padding: 12px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -195,13 +160,13 @@ main > .card.card-entries {
 .filters .field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 
 .filters .field label,
 label {
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -214,16 +179,13 @@ input, select, textarea {
   background: #fff;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 7px 10px;
+  padding: 8px 10px;
   min-width: 0;
-  max-width: none;
-  width: auto;
 }
 
 .filters input,
 .filters select {
-  min-width: 120px;
-  max-width: 200px;
+  min-width: 130px;
 }
 
 input:focus, select:focus, textarea:focus {
@@ -242,9 +204,9 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer;
   border: none;
   border-radius: var(--radius-sm);
-  padding: 7px 12px;
+  padding: 8px 14px;
   font: inherit;
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   font-weight: 650;
   background: var(--green);
   color: #fff;
@@ -260,106 +222,28 @@ input:focus, select:focus, textarea:focus {
 .btn.secondary:hover { background: var(--green-soft); }
 .btn.green { background: var(--green); color: #fff; }
 .btn.danger { background: var(--danger); color: #fff; }
-.btn.small { padding: 4px 8px; font-size: 0.72rem; }
+.btn.small { padding: 4px 8px; font-size: 0.75rem; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* ----- Tables: fill width, scroll inside panel ----- */
-.table-wrap {
-  width: 100%;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: #fff;
-  max-height: 100%;
-}
-
-/* when table sits in card-scroll, let it grow naturally and scroll with parent */
-.card-scroll .table-wrap {
-  border: none;
-  border-radius: 0;
-  max-height: none;
-}
-
-#employeeTableWrap,
-#reportTableWrap,
-#entriesTableWrap {
-  width: 100%;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: #fff;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-/* employee wrap is inside card-scroll pattern differently */
-.card-employees #employeeTableWrap {
-  margin: 10px 12px 0;
-  flex: 1 1 auto;
-  min-height: 120px;
-}
-
-.card-reports #reportTableWrap,
-.card-entries #entriesTableWrap {
-  margin: 8px 12px 12px;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-#reportMeta {
-  flex: 0 0 auto;
-  margin: 6px 12px 0;
-  font-size: 0.78rem;
-}
-
-#reportSummary {
-  flex: 0 0 auto;
-  margin: 6px 12px 0;
-  max-height: 28%;
-  overflow: auto;
-}
-
-#summaryWrap {
-  flex: 0 0 auto;
-  margin: 6px 12px 0;
-  max-height: 22%;
-  overflow: auto;
-}
-
+/* ----- Tables ----- */
 table.data {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8rem;
-  min-width: 0; /* allow full width without forced 640px on small panels */
-}
-
-.card-entries table.data,
-.card-reports table.data {
-  min-width: 720px; /* wide punch tables can scroll horizontally inside wrap */
-}
-
-.card-employees table.data {
-  min-width: 0;
-  width: 100%;
+  font-size: 0.82rem;
 }
 
 table.data th,
 table.data td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 9px 11px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 
 table.data th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   background: var(--surface-2);
   color: var(--text-secondary);
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -372,17 +256,17 @@ table.data tbody tr:hover td { background: #fafdfb; }
 table.data input[type="text"],
 table.data input[type="datetime-local"] {
   width: 100%;
-  min-width: 118px;
-  max-width: 180px;
-  font-size: 0.75rem;
-  padding: 5px 6px;
+  min-width: 120px;
+  max-width: 190px;
+  font-size: 0.78rem;
+  padding: 5px 7px;
 }
 
 .badge {
   display: inline-block;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 700;
 }
 .badge.in { background: var(--green-soft); color: var(--green-dark); }
@@ -391,25 +275,26 @@ table.data input[type="datetime-local"] {
 .row-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
 }
 
 /* ----- Add employee ----- */
 .grid {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 10px;
+  gap: 12px;
   align-items: end;
+  max-width: 520px;
 }
 
 .grid .field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .grid .field.full { grid-column: auto; }
-.grid input { width: 100%; max-width: none; }
+.grid input { width: 100%; }
 
 /* ----- Toast ----- */
 .toast {
@@ -432,43 +317,11 @@ table.data input[type="datetime-local"] {
 .toast.show { opacity: 1; transform: translateY(0); }
 .toast.err { background: var(--danger); }
 
-/* ----- Narrow / tablet: stack full height scrollable page ----- */
-@media (max-width: 960px) {
-  body { overflow: auto; height: auto; min-height: 100vh; }
-  main {
-    display: flex;
-    flex-direction: column;
-    overflow: visible;
-    height: auto;
-    min-height: calc(100vh - var(--header-h));
-    grid-template-columns: none;
-    grid-template-rows: none;
-  }
-  main > .card.card-employees,
-  main > .card.card-reports,
-  main > .card.card-entries {
-    grid-column: auto;
-    grid-row: auto;
-    min-height: 280px;
-    max-height: none;
-    height: auto;
-  }
-  .card-employees #employeeTableWrap,
-  .card-reports #reportTableWrap,
-  .card-entries #entriesTableWrap {
-    max-height: 50vh;
-    min-height: 180px;
-  }
-  #reportSummary,
-  #summaryWrap {
-    max-height: none;
-  }
-}
-
-@media (max-width: 600px) {
-  header.topbar h1 { font-size: 0.88rem; }
+@media (max-width: 640px) {
+  main { padding: 12px 12px 40px; }
+  header.topbar { padding: 0 12px; }
+  header.topbar h1 { font-size: 0.9rem; }
+  .grid { grid-template-columns: 1fr; max-width: none; }
   .filters input,
-  .filters select { min-width: 100px; max-width: 160px; }
-  .card-entries table.data,
-  .card-reports table.data { min-width: 640px; }
+  .filters select { min-width: 110px; }
 }
