@@ -195,10 +195,29 @@
     if (type === 'biweekly') {
       $('reportDateLabel').textContent = 'Period end (14 days back)';
       detailBtn.style.display = '';
+      detailBtn.textContent = 'Export CSV + totals';
     } else {
       $('reportDateLabel').textContent = 'Date';
       detailBtn.style.display = 'none';
     }
+  }
+
+  /** Shared columns for daily + biweekly (In / Lunch out / Lunch in / Out). */
+  function renderPunchRows(rows) {
+    $('reportHead').innerHTML =
+      '<tr><th>Date</th><th>Employee</th><th>In</th><th>Lunch out</th><th>Lunch in</th><th>Out</th><th>Hours</th><th>Status</th></tr>';
+    $('reportBody').innerHTML = (rows || []).map(r =>
+      '<tr>' +
+        '<td>' + esc(r.date) + '</td>' +
+        '<td>' + esc(r.employeeName) + (r.employeeNumber ? ' <span class="muted">#' + esc(r.employeeNumber) + '</span>' : '') + '</td>' +
+        '<td>' + esc(r.clockInLocal) + '</td>' +
+        '<td>' + esc(r.lunchOutLocal) + '</td>' +
+        '<td>' + esc(r.lunchInLocal) + '</td>' +
+        '<td>' + esc(r.clockOutLocal) + '</td>' +
+        '<td>' + (r.hours != null ? r.hours : '—') + '</td>' +
+        '<td>' + esc(r.status) + '</td>' +
+      '</tr>'
+    ).join('') || '<tr><td colspan="8" class="muted">No punches in this range.</td></tr>';
   }
 
   async function runReport() {
@@ -229,37 +248,29 @@
         ' · ' + data.rowCount + ' row(s) · ' + data.totalHours + ' total hrs' +
         (data.incompleteCount ? ' · ' + data.incompleteCount + ' incomplete' : '');
       sum.innerHTML = '';
-      head.innerHTML = '<tr><th>Date</th><th>Employee</th><th>In</th><th>Lunch out</th><th>Lunch in</th><th>Out</th><th>Hours</th><th>Status</th></tr>';
-      body.innerHTML = (data.rows || []).map(r =>
-        '<tr>' +
-          '<td>' + esc(r.date) + '</td>' +
-          '<td>' + esc(r.employeeName) + (r.employeeNumber ? ' <span class="muted">#' + esc(r.employeeNumber) + '</span>' : '') + '</td>' +
-          '<td>' + esc(r.clockInLocal) + '</td>' +
-          '<td>' + esc(r.lunchOutLocal) + '</td>' +
-          '<td>' + esc(r.lunchInLocal) + '</td>' +
-          '<td>' + esc(r.clockOutLocal) + '</td>' +
-          '<td>' + (r.hours != null ? r.hours : '—') + '</td>' +
-          '<td>' + esc(r.status) + '</td>' +
-        '</tr>'
-      ).join('') || '<tr><td colspan="8" class="muted">No punches this day.</td></tr>';
+      renderPunchRows(data.rows);
       return;
     }
 
     if (data.report === 'biweekly') {
       meta.textContent = data.title + ' · ' + data.periodStart + ' → ' + data.periodEnd +
-        ' · ' + (data.timezone || '') + ' · ' + data.employeeCount + ' employee(s) · ' +
-        data.totalHours + ' total hrs';
-      sum.innerHTML = '<p class="muted">Summary per employee for the 14-day pay window ending on the selected date. Use “Export detail CSV” for day-by-day punches (like TCMS daily audit).</p>';
-      head.innerHTML = '<tr><th>Employee</th><th>Days worked</th><th>Complete</th><th>Incomplete</th><th>Total hours</th></tr>';
-      body.innerHTML = (data.rows || []).map(r =>
-        '<tr>' +
-          '<td>' + esc(r.employeeName) + (r.employeeNumber ? ' <span class="muted">#' + esc(r.employeeNumber) + '</span>' : '') + '</td>' +
-          '<td>' + r.daysWorked + '</td>' +
-          '<td>' + r.completeDays + '</td>' +
-          '<td>' + r.incompleteDays + '</td>' +
-          '<td><strong>' + r.hours + '</strong></td>' +
-        '</tr>'
-      ).join('') || '<tr><td colspan="5" class="muted">No punches in this pay period.</td></tr>';
+        ' · ' + (data.timezone || '') + ' · ' + (data.rowCount || 0) + ' day-row(s) · ' +
+        (data.employeeCount || 0) + ' employee(s) · ' + data.totalHours + ' total hrs' +
+        (data.incompleteCount ? ' · ' + data.incompleteCount + ' incomplete' : '');
+      // Totals strip (still punch grid below — same columns as daily)
+      const totals = data.totals || [];
+      if (totals.length) {
+        sum.innerHTML = '<table class="data"><thead><tr><th>Employee</th><th>Days</th><th>Complete</th><th>Incomplete</th><th>Total hours</th></tr></thead><tbody>' +
+          totals.map(t =>
+            '<tr><td>' + esc(t.employeeName) + (t.employeeNumber ? ' <span class="muted">#' + esc(t.employeeNumber) + '</span>' : '') +
+            '</td><td>' + t.daysWorked + '</td><td>' + t.completeDays + '</td><td>' + t.incompleteDays +
+            '</td><td><strong>' + t.hours + '</strong></td></tr>'
+          ).join('') +
+          '</tbody></table><p class="muted" style="margin-top:10px;">Day-by-day punches (same columns as daily):</p>';
+      } else {
+        sum.innerHTML = '';
+      }
+      renderPunchRows(data.rows);
     }
   }
 

@@ -483,70 +483,72 @@ def build_daily_report(conn, day: date, employee_id=None):
 
 
 def build_biweekly_report(conn, period_end: date | None = None, employee_id=None):
-    """TCMS-style biweekly summary: per-employee totals over 14 days."""
+    """Biweekly report: same row format as daily (In / Lunch out / Lunch in / Out)."""
     start, end = biweekly_range(period_end)
     entries = list_entries_for_local_range(conn, start, end, employee_id=employee_id)
-    by_emp = {}
+
+    # Day-by-day rows — same columns as daily attendance
+    rows = []
     for e in entries:
-        key = e["employeeId"]
-        cur = by_emp.setdefault(
-            key,
+        rows.append(
             {
+                "date": e["workDate"],
                 "employeeId": e["employeeId"],
                 "employeeNumber": e.get("employeeNumber") or "",
                 "employeeName": e["employeeName"],
-                "daysWorked": 0,
-                "completeDays": 0,
-                "incompleteDays": 0,
-                "hours": 0.0,
-                "days": [],
-            },
-        )
-        day_hours = e["hours"]
-        complete = e["statusLabel"] == "Complete"
-        cur["daysWorked"] += 1
-        if complete:
-            cur["completeDays"] += 1
-        else:
-            cur["incompleteDays"] += 1
-        if day_hours is not None:
-            cur["hours"] = round(cur["hours"] + day_hours, 2)
-        cur["days"].append(
-            {
-                "date": e["workDate"],
-                "clockInLocal": fmt_local_time(e["clockIn"]),
-                "lunchOutLocal": fmt_local_time(e["lunchOut"]),
-                "lunchInLocal": fmt_local_time(e["lunchIn"]),
-                "clockOutLocal": fmt_local_time(e["clockOut"]),
-                "hours": day_hours,
-                "status": e["statusLabel"],
-            }
-        )
-    rows = sorted(by_emp.values(), key=lambda r: r["employeeName"].lower())
-    total_hours = round(sum(r["hours"] for r in rows), 2)
-    return {
-        "report": "biweekly",
-        "title": "Biweekly Attendance Summary",
-        "periodStart": start.isoformat(),
-        "periodEnd": end.isoformat(),
-        "timezone": str(getattr(BIZ_TZ, "key", BIZ_TZ)),
-        "employeeCount": len(rows),
-        "totalHours": total_hours,
-        "rows": rows,
-        "detailEntries": [
-            {
-                "date": e["workDate"],
-                "employeeNumber": e.get("employeeNumber") or "",
-                "employeeName": e["employeeName"],
+                "clockIn": e["clockIn"],
+                "lunchOut": e["lunchOut"],
+                "lunchIn": e["lunchIn"],
+                "clockOut": e["clockOut"],
                 "clockInLocal": fmt_local_time(e["clockIn"]),
                 "lunchOutLocal": fmt_local_time(e["lunchOut"]),
                 "lunchInLocal": fmt_local_time(e["lunchIn"]),
                 "clockOutLocal": fmt_local_time(e["clockOut"]),
                 "hours": e["hours"],
                 "status": e["statusLabel"],
+                "note": e.get("note") or "",
+                "edited": e.get("edited", False),
             }
-            for e in entries
-        ],
+        )
+
+    # Per-employee totals (footer / summary strip)
+    by_emp = {}
+    for r in rows:
+        key = r["employeeId"]
+        cur = by_emp.setdefault(
+            key,
+            {
+                "employeeId": r["employeeId"],
+                "employeeNumber": r["employeeNumber"],
+                "employeeName": r["employeeName"],
+                "daysWorked": 0,
+                "completeDays": 0,
+                "incompleteDays": 0,
+                "hours": 0.0,
+            },
+        )
+        cur["daysWorked"] += 1
+        if r["status"] == "Complete":
+            cur["completeDays"] += 1
+        else:
+            cur["incompleteDays"] += 1
+        if r["hours"] is not None:
+            cur["hours"] = round(cur["hours"] + r["hours"], 2)
+    totals = sorted(by_emp.values(), key=lambda x: x["employeeName"].lower())
+    total_hours = round(sum(t["hours"] for t in totals), 2)
+    incomplete = sum(1 for r in rows if r["status"] != "Complete")
+    return {
+        "report": "biweekly",
+        "title": "Biweekly Attendance Report",
+        "periodStart": start.isoformat(),
+        "periodEnd": end.isoformat(),
+        "timezone": str(getattr(BIZ_TZ, "key", BIZ_TZ)),
+        "rowCount": len(rows),
+        "employeeCount": len(totals),
+        "totalHours": total_hours,
+        "incompleteCount": incomplete,
+        "rows": rows,
+        "totals": totals,
     }
 
 
@@ -582,48 +584,54 @@ def daily_report_csv(report: dict) -> str:
 
 
 def biweekly_report_csv(report: dict, detail: bool = False) -> str:
+    """Same punch columns as daily: Date, Employee, In, Lunch Out, Lunch In, Out, Hours, Status.
+
+    detail=False still exports the day-by-day punch grid (consistent formatting).
+    detail=True also appends a per-employee totals section at the bottom.
+    """
     lines = [
         f"# {report['title']}",
         f"# Period,{report['periodStart']} to {report['periodEnd']}",
         f"# Timezone,{report['timezone']}",
         f"# Total hours,{report['totalHours']}",
+        "Date,Employee,In,Lunch Out,Lunch In,Out,Hours,Status",
     ]
-    if detail:
-        lines.append("Date,Employee,In,Lunch Out,Lunch In,Out,Hours,Status")
-        for r in report["detailEntries"]:
-            emp_label = r["employeeName"]
-            if r.get("employeeNumber"):
-                emp_label = f"{r['employeeName']} (#{r['employeeNumber']})"
-            lines.append(
-                ",".join(
-                    csv_escape(v)
-                    for v in (
-                        r["date"],
-                        emp_label,
-                        r["clockInLocal"],
-                        r["lunchOutLocal"],
-                        r["lunchInLocal"],
-                        r["clockOutLocal"],
-                        r["hours"] if r["hours"] is not None else "",
-                        r["status"],
-                    )
+    for r in report["rows"]:
+        emp_label = r["employeeName"]
+        if r.get("employeeNumber"):
+            emp_label = f"{r['employeeName']} (#{r['employeeNumber']})"
+        lines.append(
+            ",".join(
+                csv_escape(v)
+                for v in (
+                    r["date"],
+                    emp_label,
+                    r["clockInLocal"],
+                    r["lunchOutLocal"],
+                    r["lunchInLocal"],
+                    r["clockOutLocal"],
+                    r["hours"] if r["hours"] is not None else "",
+                    r["status"],
                 )
             )
-    else:
+        )
+    if detail and report.get("totals"):
+        lines.append("")
+        lines.append("# Employee totals")
         lines.append("Employee,Days Worked,Complete Days,Incomplete Days,Total Hours")
-        for r in report["rows"]:
-            emp_label = r["employeeName"]
-            if r.get("employeeNumber"):
-                emp_label = f"{r['employeeName']} (#{r['employeeNumber']})"
+        for t in report["totals"]:
+            emp_label = t["employeeName"]
+            if t.get("employeeNumber"):
+                emp_label = f"{t['employeeName']} (#{t['employeeNumber']})"
             lines.append(
                 ",".join(
                     csv_escape(v)
                     for v in (
                         emp_label,
-                        r["daysWorked"],
-                        r["completeDays"],
-                        r["incompleteDays"],
-                        r["hours"],
+                        t["daysWorked"],
+                        t["completeDays"],
+                        t["incompleteDays"],
+                        t["hours"],
                     )
                 )
             )
@@ -1122,18 +1130,15 @@ class Handler(BaseHTTPRequestHandler):
                 period_end = parse_date_param(qp("periodEnd") or qp("end") or qp("date"))
                 emp = qp("employeeId")
                 report = build_biweekly_report(conn, period_end=period_end, employee_id=emp)
-                if path.endswith("biweekly-detail.csv"):
-                    send_csv_response(
-                        self,
-                        f"biweekly-detail-{report['periodStart']}_to_{report['periodEnd']}.csv",
-                        biweekly_report_csv(report, detail=True),
-                    )
-                    return
+                # Both CSV routes use the same In/Lunch out/Lunch in/Out grid;
+                # *-detail.csv also appends employee totals at the bottom.
                 if path.endswith(".csv"):
+                    with_totals = path.endswith("biweekly-detail.csv")
+                    kind = "detail" if with_totals else "report"
                     send_csv_response(
                         self,
-                        f"biweekly-summary-{report['periodStart']}_to_{report['periodEnd']}.csv",
-                        biweekly_report_csv(report, detail=False),
+                        f"biweekly-{kind}-{report['periodStart']}_to_{report['periodEnd']}.csv",
+                        biweekly_report_csv(report, detail=with_totals),
                     )
                     return
                 self.send_json(200, report)
