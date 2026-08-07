@@ -391,9 +391,12 @@
       lunch_in: name + ', lunch in',
       out: name + ', clocked out'
     };
-    const line = phrases[data.action] || (name + ', ' + (data.label || 'punched'));
+    let line = phrases[data.action] || (name + ', ' + (data.label || 'punched'));
+    // e.g. "Jesus Polanco, clocked in. Late, 12 minutes."
+    if (data.scheduleLabel) {
+      line += '. ' + data.scheduleLabel.replace(/\(/g, '').replace(/\)/g, '');
+    }
     pendingSpeech = line;
-    // Speak after short beep; keep trying if voices load late
     setTimeout(function () {
       speak(pendingSpeech);
       pendingSpeech = null;
@@ -468,6 +471,11 @@
       let msg = data.employeeName + ' — ' + label + ' @ ' + fmtTime(
         data.clockOut || data.lunchIn || data.lunchOut || data.clockIn
       );
+      if (data.scheduleLabel) {
+        msg += ' · ' + data.scheduleLabel;
+      } else if (data.scheduleNote) {
+        msg += ' · ' + data.scheduleNote;
+      }
       if (data.action === 'out' && data.hours != null) {
         msg += ' · ' + data.hours + ' hrs worked';
       } else if (data.action === 'lunch_out' && data.hours != null) {

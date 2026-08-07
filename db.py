@@ -98,11 +98,31 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
     # Migrate older DBs that only had clock_in / clock_out
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(time_entries);").fetchall()}
-    if "lunch_out_utc" not in cols:
-        conn.execute("ALTER TABLE time_entries ADD COLUMN lunch_out_utc TEXT;")
-    if "lunch_in_utc" not in cols:
-        conn.execute("ALTER TABLE time_entries ADD COLUMN lunch_in_utc TEXT;")
+    entry_cols = {row[1] for row in conn.execute("PRAGMA table_info(time_entries);").fetchall()}
+    for col, decl in (
+        ("lunch_out_utc", "TEXT"),
+        ("lunch_in_utc", "TEXT"),
+        ("in_note", "TEXT"),
+        ("lunch_out_note", "TEXT"),
+        ("lunch_in_note", "TEXT"),
+        ("out_note", "TEXT"),
+    ):
+        if col not in entry_cols:
+            conn.execute(f"ALTER TABLE time_entries ADD COLUMN {col} {decl};")
+
+    # Per-employee expected schedule (optional fixed hourly profile)
+    emp_cols = {row[1] for row in conn.execute("PRAGMA table_info(employees);").fetchall()}
+    for col, decl in (
+        ("schedule_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        ("expected_in", "TEXT"),
+        ("expected_lunch_out", "TEXT"),
+        ("expected_lunch_in", "TEXT"),
+        ("expected_out", "TEXT"),
+        ("grace_early_min", "INTEGER NOT NULL DEFAULT 15"),
+        ("grace_late_min", "INTEGER NOT NULL DEFAULT 10"),
+    ):
+        if col not in emp_cols:
+            conn.execute(f"ALTER TABLE employees ADD COLUMN {col} {decl};")
     conn.commit()
 
 

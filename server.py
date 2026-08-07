@@ -213,10 +213,138 @@ def csv_escape(value) -> str:
     return s
 
 
+# ---------- Schedule profiles (expected punch windows) ----------
+PUNCH_EXPECTED_FIELDS = {
+    "in": "expected_in",
+    "lunch_out": "expected_lunch_out",
+    "lunch_in": "expected_lunch_in",
+    "out": "expected_out",
+}
+PUNCH_NOTE_COLUMNS = {
+    "in": "in_note",
+    "lunch_out": "lunch_out_note",
+    "lunch_in": "lunch_in_note",
+    "out": "out_note",
+}
+HHMM_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+
+def parse_hhmm(value):
+    if not value:
+        return None
+    s = str(value).strip()
+    m = HHMM_RE.fullmatch(s)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def normalize_hhmm(value):
+    parsed = parse_hhmm(value)
+    if not parsed:
+        return None
+    return f"{parsed[0]:02d}:{parsed[1]:02d}"
+
+
+def employee_schedule(emp_row) -> dict:
+    """Read schedule profile from an employees sqlite row."""
+    keys = emp_row.keys() if hasattr(emp_row, "keys") else []
+    def g(name, default=None):
+        if name in keys:
+            return emp_row[name]
+        return default
+
+    enabled = bool(g("schedule_enabled", 0))
+    try:
+        grace_early = int(g("grace_early_min", 15) or 15)
+    except (TypeError, ValueError):
+        grace_early = 15
+    try:
+        grace_late = int(g("grace_late_min", 10) or 10)
+    except (TypeError, ValueError):
+        grace_late = 10
+    return {
+        "enabled": enabled,
+        "expectedIn": normalize_hhmm(g("expected_in")) or "",
+        "expectedLunchOut": normalize_hhmm(g("expected_lunch_out")) or "",
+        "expectedLunchIn": normalize_hhmm(g("expected_lunch_in")) or "",
+        "expectedOut": normalize_hhmm(g("expected_out")) or "",
+        "graceEarlyMin": max(0, min(180, grace_early)),
+        "graceLateMin": max(0, min(180, grace_late)),
+    }
+
+
+def evaluate_punch_timing(emp_row, action: str, punch_iso: str) -> dict | None:
+    """Compare punch time to employee's expected window for that punch type.
+
+    Returns note payload for kiosk/admin, or None if no schedule / no expected time.
+    """
+    sched = employee_schedule(emp_row)
+    if not sched["enabled"]:
+        return None
+    field = PUNCH_EXPECTED_FIELDS.get(action)
+    if not field:
+        return None
+    # map field to schedule dict key
+    key_map = {
+        "expected_in": "expectedIn",
+        "expected_lunch_out": "expectedLunchOut",
+        "expected_lunch_in": "expectedLunchIn",
+        "expected_out": "expectedOut",
+    }
+    expected_s = sched.get(key_map[field]) or ""
+    expected = parse_hhmm(expected_s)
+    if not expected:
+        return None
+
+    local = iso_to_local_dt(punch_iso)
+    if not local:
+        return None
+    expected_dt = local.replace(hour=expected[0], minute=expected[1], second=0, microsecond=0)
+    delta_min = int(round((local - expected_dt).total_seconds() / 60.0))
+    early = sched["graceEarlyMin"]
+    late = sched["graceLateMin"]
+
+    if delta_min < -early:
+        status = "early"
+        mins = abs(delta_min)
+        label = f"Early ({mins} min)"
+        note = f"Early by {mins} min (expected {expected_s})"
+    elif delta_min > late:
+        status = "late"
+        mins = delta_min
+        label = f"Late ({mins} min)"
+        note = f"Late by {mins} min (expected {expected_s})"
+    else:
+        status = "on_time"
+        label = "On time"
+        if delta_min == 0:
+            note = f"On time (expected {expected_s})"
+        elif delta_min < 0:
+            note = f"On time ({abs(delta_min)} min early, within grace)"
+        else:
+            note = f"On time ({delta_min} min past expected, within grace)"
+
+    return {
+        "status": status,
+        "label": label,
+        "note": note,
+        "expected": expected_s,
+        "deltaMinutes": delta_min,
+        "graceEarlyMin": early,
+        "graceLateMin": late,
+    }
+
+
 # ---------- Employee + time entry helpers (operate on db.get_db(), caller holds db.lock()) ----------
 def list_all_employees(conn):
     rows = conn.execute(
-        "SELECT id, name, employee_number AS employeeNumber, active, created_at_utc AS createdAt "
+        "SELECT id, name, employee_number AS employeeNumber, active, created_at_utc AS createdAt, "
+        "COALESCE(schedule_enabled, 0) AS scheduleEnabled, "
+        "expected_in AS expectedIn, expected_lunch_out AS expectedLunchOut, "
+        "expected_lunch_in AS expectedLunchIn, expected_out AS expectedOut, "
+        "COALESCE(grace_early_min, 15) AS graceEarlyMin, "
+        "COALESCE(grace_late_min, 10) AS graceLateMin "
         "FROM employees ORDER BY name COLLATE NOCASE;"
     ).fetchall()
     return [
@@ -226,6 +354,13 @@ def list_all_employees(conn):
             "employeeNumber": r["employeeNumber"],
             "active": bool(r["active"]),
             "createdAt": r["createdAt"],
+            "scheduleEnabled": bool(r["scheduleEnabled"]),
+            "expectedIn": r["expectedIn"] or "",
+            "expectedLunchOut": r["expectedLunchOut"] or "",
+            "expectedLunchIn": r["expectedLunchIn"] or "",
+            "expectedOut": r["expectedOut"] or "",
+            "graceEarlyMin": int(r["graceEarlyMin"] or 15),
+            "graceLateMin": int(r["graceLateMin"] or 10),
         }
         for r in rows
     ]
@@ -897,6 +1032,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             # ---- Kiosk (public): 4 punches — IN → LUNCH OUT → LUNCH IN → OUT ----
+            # Each punch type is written once into its own column (never overwrites earlier punches).
             if method == "POST" and path == "/api/clock":
                 body = self.read_json_body()
                 employee_number = str(body.get("employeeNumber") or "").strip()
@@ -916,11 +1052,16 @@ class Handler(BaseHTTPRequestHandler):
                     "lunch_in": "LUNCH IN",
                     "out": "OUT",
                 }
+                timing = evaluate_punch_timing(employee, action, now)
+                timing_note = timing["note"] if timing else None
+                timing_label = timing["label"] if timing else None
+                note_col = PUNCH_NOTE_COLUMNS[action]
 
                 if action == "in":
-                    cur = conn.execute(
-                        "INSERT INTO time_entries (employee_id, clock_in_utc) VALUES (?, ?);",
-                        (employee["id"], now),
+                    # First punch of the day — creates the day row; later punches only fill empty slots.
+                    conn.execute(
+                        f"INSERT INTO time_entries (employee_id, clock_in_utc, {note_col}) VALUES (?, ?, ?);",
+                        (employee["id"], now, timing_note),
                     )
                     conn.commit()
                     self.send_json(
@@ -932,70 +1073,93 @@ class Handler(BaseHTTPRequestHandler):
                             "clockIn": now,
                             "nextAction": "lunch_out",
                             "hours": None,
+                            "scheduleNote": timing_note,
+                            "scheduleLabel": timing_label,
+                            "scheduleStatus": timing["status"] if timing else None,
                         },
                     )
                     return
 
                 entry_id = open_entry["id"]
                 if action == "lunch_out":
+                    # Only set lunch_out if still empty (preserve first lunch-out time)
                     conn.execute(
-                        "UPDATE time_entries SET lunch_out_utc = ?, "
-                        "updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
-                        (now, entry_id),
+                        f"""
+                        UPDATE time_entries SET lunch_out_utc = COALESCE(lunch_out_utc, ?),
+                               {note_col} = COALESCE({note_col}, ?),
+                               updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                        WHERE id = ? AND lunch_out_utc IS NULL;
+                        """,
+                        (now, timing_note, entry_id),
                     )
                     conn.commit()
-                    hours = worked_hours(open_entry["clock_in_utc"], now, None, None)
+                    row = conn.execute("SELECT * FROM time_entries WHERE id = ?;", (entry_id,)).fetchone()
+                    hours = worked_hours(row["clock_in_utc"], row["lunch_out_utc"], None, None)
                     self.send_json(
                         200,
                         {
                             "action": "lunch_out",
                             "label": labels["lunch_out"],
                             "employeeName": employee["name"],
-                            "clockIn": open_entry["clock_in_utc"],
-                            "lunchOut": now,
+                            "clockIn": row["clock_in_utc"],
+                            "lunchOut": row["lunch_out_utc"],
                             "nextAction": "lunch_in",
                             "hours": hours,
+                            "scheduleNote": timing_note,
+                            "scheduleLabel": timing_label,
+                            "scheduleStatus": timing["status"] if timing else None,
                         },
                     )
                     return
 
                 if action == "lunch_in":
                     conn.execute(
-                        "UPDATE time_entries SET lunch_in_utc = ?, "
-                        "updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
-                        (now, entry_id),
+                        f"""
+                        UPDATE time_entries SET lunch_in_utc = COALESCE(lunch_in_utc, ?),
+                               {note_col} = COALESCE({note_col}, ?),
+                               updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                        WHERE id = ? AND lunch_in_utc IS NULL;
+                        """,
+                        (now, timing_note, entry_id),
                     )
                     conn.commit()
-                    hours = worked_hours(
-                        open_entry["clock_in_utc"], open_entry["lunch_out_utc"], now, None
-                    )
+                    row = conn.execute("SELECT * FROM time_entries WHERE id = ?;", (entry_id,)).fetchone()
+                    hours = worked_hours(row["clock_in_utc"], row["lunch_out_utc"], row["lunch_in_utc"], None)
                     self.send_json(
                         200,
                         {
                             "action": "lunch_in",
                             "label": labels["lunch_in"],
                             "employeeName": employee["name"],
-                            "clockIn": open_entry["clock_in_utc"],
-                            "lunchOut": open_entry["lunch_out_utc"],
-                            "lunchIn": now,
+                            "clockIn": row["clock_in_utc"],
+                            "lunchOut": row["lunch_out_utc"],
+                            "lunchIn": row["lunch_in_utc"],
                             "nextAction": "out",
                             "hours": hours,
+                            "scheduleNote": timing_note,
+                            "scheduleLabel": timing_label,
+                            "scheduleStatus": timing["status"] if timing else None,
                         },
                     )
                     return
 
-                # action == "out"
+                # action == "out" — closes the day; earlier punches stay as first-saved values
                 conn.execute(
-                    "UPDATE time_entries SET clock_out_utc = ?, "
-                    "updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
-                    (now, entry_id),
+                    f"""
+                    UPDATE time_entries SET clock_out_utc = COALESCE(clock_out_utc, ?),
+                           {note_col} = COALESCE({note_col}, ?),
+                           updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                    WHERE id = ? AND clock_out_utc IS NULL;
+                    """,
+                    (now, timing_note, entry_id),
                 )
                 conn.commit()
+                row = conn.execute("SELECT * FROM time_entries WHERE id = ?;", (entry_id,)).fetchone()
                 hours = worked_hours(
-                    open_entry["clock_in_utc"],
-                    open_entry["lunch_out_utc"],
-                    open_entry["lunch_in_utc"],
-                    now,
+                    row["clock_in_utc"],
+                    row["lunch_out_utc"],
+                    row["lunch_in_utc"],
+                    row["clock_out_utc"],
                 )
                 self.send_json(
                     200,
@@ -1003,12 +1167,15 @@ class Handler(BaseHTTPRequestHandler):
                         "action": "out",
                         "label": labels["out"],
                         "employeeName": employee["name"],
-                        "clockIn": open_entry["clock_in_utc"],
-                        "lunchOut": open_entry["lunch_out_utc"],
-                        "lunchIn": open_entry["lunch_in_utc"],
-                        "clockOut": now,
+                        "clockIn": row["clock_in_utc"],
+                        "lunchOut": row["lunch_out_utc"],
+                        "lunchIn": row["lunch_in_utc"],
+                        "clockOut": row["clock_out_utc"],
                         "nextAction": "in",
                         "hours": hours,
+                        "scheduleNote": timing_note,
+                        "scheduleLabel": timing_label,
+                        "scheduleStatus": timing["status"] if timing else None,
                     },
                 )
                 return
@@ -1064,17 +1231,78 @@ class Handler(BaseHTTPRequestHandler):
                     if not EMPLOYEE_NUMBER_RE.fullmatch(employee_number):
                         self.send_error_json(400, "employee number must be 1-8 digits")
                         return
+
+                # Optional fixed schedule profile (expected punch times + grace)
+                schedule_enabled = employee["schedule_enabled"] if "schedule_enabled" in employee.keys() else 0
+                if "scheduleEnabled" in body:
+                    schedule_enabled = 1 if body.get("scheduleEnabled") else 0
+                expected_in = employee["expected_in"] if "expected_in" in employee.keys() else None
+                expected_lunch_out = employee["expected_lunch_out"] if "expected_lunch_out" in employee.keys() else None
+                expected_lunch_in = employee["expected_lunch_in"] if "expected_lunch_in" in employee.keys() else None
+                expected_out = employee["expected_out"] if "expected_out" in employee.keys() else None
+                grace_early = employee["grace_early_min"] if "grace_early_min" in employee.keys() else 15
+                grace_late = employee["grace_late_min"] if "grace_late_min" in employee.keys() else 10
+                if "expectedIn" in body:
+                    expected_in = normalize_hhmm(body.get("expectedIn")) if body.get("expectedIn") else None
+                if "expectedLunchOut" in body:
+                    expected_lunch_out = normalize_hhmm(body.get("expectedLunchOut")) if body.get("expectedLunchOut") else None
+                if "expectedLunchIn" in body:
+                    expected_lunch_in = normalize_hhmm(body.get("expectedLunchIn")) if body.get("expectedLunchIn") else None
+                if "expectedOut" in body:
+                    expected_out = normalize_hhmm(body.get("expectedOut")) if body.get("expectedOut") else None
+                if "graceEarlyMin" in body:
+                    try:
+                        grace_early = max(0, min(180, int(body.get("graceEarlyMin"))))
+                    except (TypeError, ValueError):
+                        pass
+                if "graceLateMin" in body:
+                    try:
+                        grace_late = max(0, min(180, int(body.get("graceLateMin"))))
+                    except (TypeError, ValueError):
+                        pass
+
                 try:
                     conn.execute(
-                        "UPDATE employees SET name = ?, active = ?, employee_number = ?, "
-                        "updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;",
-                        (name, active, employee_number, employee_id),
+                        """
+                        UPDATE employees SET name = ?, active = ?, employee_number = ?,
+                               schedule_enabled = ?, expected_in = ?, expected_lunch_out = ?,
+                               expected_lunch_in = ?, expected_out = ?,
+                               grace_early_min = ?, grace_late_min = ?,
+                               updated_at_utc = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                        WHERE id = ?;
+                        """,
+                        (
+                            name,
+                            active,
+                            employee_number,
+                            schedule_enabled,
+                            expected_in,
+                            expected_lunch_out,
+                            expected_lunch_in,
+                            expected_out,
+                            grace_early,
+                            grace_late,
+                            employee_id,
+                        ),
                     )
                     conn.commit()
                 except sqlite3.IntegrityError:
                     self.send_error_json(400, "that employee number is already in use")
                     return
-                self.send_json(200, {"ok": True, "employeeNumber": employee_number})
+                self.send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "employeeNumber": employee_number,
+                        "scheduleEnabled": bool(schedule_enabled),
+                        "expectedIn": expected_in or "",
+                        "expectedLunchOut": expected_lunch_out or "",
+                        "expectedLunchIn": expected_lunch_in or "",
+                        "expectedOut": expected_out or "",
+                        "graceEarlyMin": grace_early,
+                        "graceLateMin": grace_late,
+                    },
+                )
                 return
             if employee_match and method == "DELETE":
                 employee_id = int(employee_match.group(1))

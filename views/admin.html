@@ -99,16 +99,44 @@
   <!-- Employees -->
   <section class="card tab-panel" id="panel-employees" data-panel="employees" hidden>
     <h2>Employees</h2>
-    <p class="hint">Add by <strong>name only</strong>. Punch code is assigned automatically.</p>
+    <p class="hint">Add by <strong>name only</strong>. Optional fixed schedule tells the kiosk if punches are early / on time / late.</p>
     <div id="employeeTableWrap">
       <table class="data">
-        <thead><tr><th>Employee</th><th>Status</th><th>Added</th><th></th></tr></thead>
+        <thead><tr>
+          <th>Employee</th>
+          <th>Status</th>
+          <th>Schedule</th>
+          <th>Expected times</th>
+          <th></th>
+        </tr></thead>
         <tbody id="employeeBody"></tbody>
       </table>
     </div>
     <div class="grid">
       <div class="field"><label>Name</label><input id="newName" placeholder="Full name"></div>
       <div class="field"><label>&nbsp;</label><button class="btn green" id="addEmployeeBtn">Add</button></div>
+    </div>
+
+    <div class="card schedule-editor" id="scheduleEditor" hidden style="margin:16px;box-shadow:none;">
+      <h2 style="background:#fff;border:none;padding:0 0 10px;">Edit schedule — <span id="schedName"></span></h2>
+      <input type="hidden" id="schedId">
+      <div class="filters" style="margin:0 0 12px;">
+        <label class="field" style="flex-direction:row;align-items:center;gap:8px;">
+          <input type="checkbox" id="schedEnabled" style="width:auto;">
+          <span>Use fixed schedule for this employee</span>
+        </label>
+      </div>
+      <div class="filters">
+        <div class="field"><label>Expected In</label><input id="schedIn" type="time"></div>
+        <div class="field"><label>Lunch out</label><input id="schedLunchOut" type="time"></div>
+        <div class="field"><label>Lunch in</label><input id="schedLunchIn" type="time"></div>
+        <div class="field"><label>Expected Out</label><input id="schedOut" type="time"></div>
+        <div class="field"><label>Grace early (min)</label><input id="schedGraceEarly" type="number" min="0" max="180" value="15" style="min-width:80px;"></div>
+        <div class="field"><label>Grace late (min)</label><input id="schedGraceLate" type="number" min="0" max="180" value="10" style="min-width:80px;"></div>
+        <button type="button" class="btn" id="schedSaveBtn">Save schedule</button>
+        <button type="button" class="btn secondary" id="schedCancelBtn">Close</button>
+      </div>
+      <p class="hint">Example: In 08:00, Lunch out 12:00, Lunch in 12:30, Out 17:00. Grace 15 early / 10 late means on-time windows around each expected time.</p>
     </div>
   </section>
 
@@ -261,18 +289,50 @@
     return esc(e.name || '');
   }
 
+  function scheduleSummary(e) {
+    if (!e.scheduleEnabled) return '<span class="badge out">Flexible</span>';
+    return '<span class="badge in">Fixed</span>';
+  }
+
+  function scheduleTimes(e) {
+    if (!e.scheduleEnabled) return '<span class="muted">—</span>';
+    const parts = [
+      e.expectedIn && ('In ' + e.expectedIn),
+      e.expectedLunchOut && ('LO ' + e.expectedLunchOut),
+      e.expectedLunchIn && ('LI ' + e.expectedLunchIn),
+      e.expectedOut && ('Out ' + e.expectedOut)
+    ].filter(Boolean);
+    return parts.length ? esc(parts.join(' · ')) : '<span class="muted">Set times…</span>';
+  }
+
+  function openScheduleEditor(emp) {
+    $('schedId').value = emp.id;
+    $('schedName').textContent = emp.name + (emp.employeeNumber ? ' #' + emp.employeeNumber : '');
+    $('schedEnabled').checked = !!emp.scheduleEnabled;
+    $('schedIn').value = emp.expectedIn || '';
+    $('schedLunchOut').value = emp.expectedLunchOut || '';
+    $('schedLunchIn').value = emp.expectedLunchIn || '';
+    $('schedOut').value = emp.expectedOut || '';
+    $('schedGraceEarly').value = emp.graceEarlyMin != null ? emp.graceEarlyMin : 15;
+    $('schedGraceLate').value = emp.graceLateMin != null ? emp.graceLateMin : 10;
+    $('scheduleEditor').hidden = false;
+    $('scheduleEditor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
   function renderEmployeeTable() {
     $('employeeBody').innerHTML = employees.map(e => {
       const badge = e.active ? '<span class="badge in">Active</span>' : '<span class="badge out">Inactive</span>';
       return '<tr>' +
         '<td>' + employeeLabel(e) + '</td>' +
         '<td>' + badge + '</td>' +
-        '<td class="muted">' + esc(fmtDT(e.createdAt)) + '</td>' +
+        '<td>' + scheduleSummary(e) + '</td>' +
+        '<td class="muted">' + scheduleTimes(e) + '</td>' +
         '<td class="row-actions">' +
+          '<button class="btn small secondary" data-act="schedule" data-id="' + e.id + '">Schedule</button>' +
           '<button class="btn small ' + (e.active ? 'danger' : 'green') + '" data-act="toggle" data-id="' + e.id + '">' +
             (e.active ? 'Deactivate' : 'Reactivate') + '</button>' +
         '</td></tr>';
-    }).join('') || '<tr><td colspan="4" class="muted">No employees yet.</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="muted">No employees yet.</td></tr>';
 
     $('employeeBody').querySelectorAll('button[data-act="toggle"]').forEach(btn => {
       btn.onclick = async () => {
@@ -284,7 +344,37 @@
         loadEmployees();
       };
     });
+    $('employeeBody').querySelectorAll('button[data-act="schedule"]').forEach(btn => {
+      btn.onclick = () => {
+        const emp = employees.find(e => e.id === Number(btn.dataset.id));
+        if (emp) openScheduleEditor(emp);
+      };
+    });
   }
+
+  $('schedCancelBtn').onclick = () => { $('scheduleEditor').hidden = true; };
+  $('schedSaveBtn').onclick = async () => {
+    const id = $('schedId').value;
+    if (!id) return;
+    const body = {
+      scheduleEnabled: $('schedEnabled').checked,
+      expectedIn: $('schedIn').value || '',
+      expectedLunchOut: $('schedLunchOut').value || '',
+      expectedLunchIn: $('schedLunchIn').value || '',
+      expectedOut: $('schedOut').value || '',
+      graceEarlyMin: Number($('schedGraceEarly').value || 15),
+      graceLateMin: Number($('schedGraceLate').value || 10)
+    };
+    const res = await api('/api/admin/employees/' + id, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Failed to save schedule', true); return; }
+    toast('Schedule saved');
+    $('scheduleEditor').hidden = true;
+    loadEmployees();
+  };
 
   function renderEmployeeFilters() {
     const opts = '<option value="">All</option>' +
