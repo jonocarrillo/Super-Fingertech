@@ -1,0 +1,22 @@
+[Unit]
+Description=Advertise %i.local on LAN (mDNS)
+After=network-online.target avahi-daemon.service NetworkManager.service
+Wants=network-online.target avahi-daemon.service
+# Re-try forever if interface/IP is slow after power restore
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Wait up to ~2 min for ethernet IPv4, then publish that IP as <instance>.local
+ExecStart=/bin/bash -c 'set -e; IF=enp0s31f6; NAME="%i.local"; \
+  for i in $(seq 1 60); do \
+    IP=$$(ip -4 -o addr show dev "$$IF" scope global 2>/dev/null | awk "{print \$$4}" | cut -d/ -f1 | head -1); \
+    if [ -n "$$IP" ]; then exec /usr/bin/avahi-publish -a -R "$$NAME" "$$IP"; fi; \
+    sleep 2; \
+  done; \
+  echo "No IPv4 on $$IF after wait" >&2; exit 1'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target banana-apps.target

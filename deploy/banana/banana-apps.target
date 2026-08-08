@@ -1,0 +1,15 @@
+[Unit]
+Description=Banana LAN apps (clock, weighbridge, names, proxy)
+Documentation=file:///home/americanindustrial/Super-Fingertech/deploy/banana/README.md
+# Bring up backends first, then nginx is already system-enabled
+Wants=network-online.target avahi-daemon.service \
+      clock-terminal.service weighbridge.service \
+      mdns-name@clock.service mdns-name@admin.service mdns-name@supercluster.service \
+      nginx.service tailscaled.service ssh.service
+After=network-online.target \
+      clock-terminal.service weighbridge.service \
+      mdns-name@clock.service mdns-name@admin.service mdns-name@supercluster.service \
+      nginx.service
+
+[Install]
+WantedBy=multi-user.target

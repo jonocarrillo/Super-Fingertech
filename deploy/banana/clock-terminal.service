@@ -1,0 +1,30 @@
+[Unit]
+Description=Employee clock-in terminal (LAN)
+Documentation=file:///home/americanindustrial/Super-Fingertech/README.md
+After=network-online.target
+Wants=network-online.target
+# Start even if network-online is slow/missing after power restore
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=americanindustrial
+Group=americanindustrial
+WorkingDirectory=/home/americanindustrial/Super-Fingertech
+Environment=PORT=5050
+Environment=CLOCK_DASHBOARD_HOST=0.0.0.0
+ExecStart=/usr/bin/python3 /home/americanindustrial/Super-Fingertech/server.py
+Restart=always
+RestartSec=3
+# Give slow disks a moment after abrupt power loss
+TimeoutStartSec=60
+TimeoutStopSec=20
+
+# Hardening (keep data writable)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/americanindustrial/Super-Fingertech/data
+
+[Install]
+WantedBy=multi-user.target banana-apps.target
