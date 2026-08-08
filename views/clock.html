@@ -244,6 +244,30 @@
     top: 24px;
   }
 
+  /* Confetti for Maximiliano only */
+  #confetti-root {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 60;
+  }
+  .confetti-piece {
+    position: absolute;
+    top: -12px;
+    width: 10px;
+    height: 14px;
+    border-radius: 2px;
+    opacity: 0.95;
+    animation-name: confetti-fall;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+  }
+  @keyframes confetti-fall {
+    0% { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 1; }
+    100% { transform: translate3d(var(--dx), 110vh, 0) rotate(720deg); opacity: 0.85; }
+  }
+
   /* Tablet / landscape: slightly larger pad */
   @media (min-width: 700px) {
     .pad { width: min(460px, 100%); padding: 28px 26px 24px; }
@@ -302,6 +326,7 @@
   </main>
 
   <div class="toast" id="toast"></div>
+  <div id="confetti-root" aria-hidden="true"></div>
 
 <script>
 (function () {
@@ -523,6 +548,46 @@
     speak(eggFlipped ? 'Upside down mode' : 'Right side up');
     toast(eggFlipped ? '🙃 Upside down!' : '🙂 Right side up');
     resetAll();
+  }
+
+  /** Confetti only for Maximiliano Sanchez (name match, case/accents flexible). */
+  function isMaximilianoSanchez(name) {
+    if (!name) return false;
+    const n = String(name)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Allow common spellings: Maximiliano / Maximilaino typo, Sanchez
+    const hasMax = /\bmaximiliano\b/.test(n) || /\bmaximilaino\b/.test(n) || /\bmax\b/.test(n) && n.includes('sanchez');
+    const hasSanchez = /\bsanchez\b/.test(n);
+    return (/\bmaximiliano\b/.test(n) || /\bmaximilaino\b/.test(n)) && hasSanchez;
+  }
+
+  function shootConfetti() {
+    const root = document.getElementById('confetti-root');
+    if (!root) return;
+    const colors = ['#22c55e', '#4ade80', '#fbbf24', '#f472b6', '#60a5fa', '#f87171', '#a78bfa', '#ffffff'];
+    const count = 90;
+    for (let i = 0; i < count; i++) {
+      const el = document.createElement('div');
+      el.className = 'confetti-piece';
+      const left = Math.random() * 100;
+      const dx = (Math.random() * 120 - 60) + 'px';
+      const dur = 1.4 + Math.random() * 1.6;
+      const delay = Math.random() * 0.25;
+      el.style.left = left + 'vw';
+      el.style.background = colors[i % colors.length];
+      el.style.width = (6 + Math.random() * 8) + 'px';
+      el.style.height = (8 + Math.random() * 10) + 'px';
+      el.style.setProperty('--dx', dx);
+      el.style.animationDuration = dur + 's';
+      el.style.animationDelay = delay + 's';
+      root.appendChild(el);
+      setTimeout(() => { el.remove(); }, (dur + delay) * 1000 + 50);
+    }
   }
 
   async function lookupCode() {
